@@ -1,334 +1,507 @@
+/* ---------------------------------------------------------------------------
+   Geist. Near-black surfaces, one step of elevation, hairline borders, and no
+   decoration that is not carrying information.
+
+   The palette is monochrome on purpose: colour is reserved for state, so a
+   green pill or a red countdown is never competing with a coloured heading or
+   an accent border for attention.
+   --------------------------------------------------------------------------- */
+
 :root {
   color-scheme: dark;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-  --bg: #0b1120;
-  --panel: rgba(15, 23, 42, 0.82);
-  --border: rgba(148, 163, 184, 0.18);
-  --text: #f1f5f9;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --ok: #34d399;
-  --warn: #fbbf24;
-  --danger: #f87171;
+  --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, 'SF Mono', Menlo,
+    Consolas, 'Liberation Mono', monospace;
+
+  /* Greyscale ramp. Everything structural comes from here. */
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface-raised: #111111;
+  --border: #1f1f1f;
+  --border-strong: #2e2e2e;
+  --border-focus: #ededed;
+
+  --fg: #ededed;
+  --fg-muted: #a1a1a1;
+  --fg-subtle: #6f6f6f;
+
+  /* State only. */
+  --blue: #0072f5;
+  --green: #17c964;
+  --amber: #f5a623;
+  --red: #ff4d4f;
+
+  --radius: 6px;
+  --radius-lg: 12px;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(1200px 600px at 20% -10%, #16233f, transparent), var(--bg);
-  color: var(--text);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  /* Geist sets slightly tight by default; matching it keeps text on-brand. */
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
 }
 
+::selection {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* Every interactive element gets the same visible ring, drawn outside the
+   element so it never shifts layout. */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+/* --- Typography ------------------------------------------------------------- */
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  /* Display sizes carry tighter tracking than body; this is the single most
+     recognisable part of the Geist voice. */
+  letter-spacing: -0.035em;
+}
+
+h1 {
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+h2 {
+  font-size: 16px;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+}
+
+h3 {
+  margin: 28px 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--fg-muted);
+}
+
+h3 em {
+  font-style: normal;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--fg-muted);
+}
+
+a {
+  color: var(--fg);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--fg-muted);
+}
+
+.back {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.back:hover {
+  color: var(--fg);
+}
+
+/* --- Layout ----------------------------------------------------------------- */
+
 .shell {
-  max-width: 1180px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 40px 24px 72px;
+  padding: 40px 24px 96px;
 }
 
 .masthead {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 28px;
+  padding-bottom: 24px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid var(--border);
 }
 
 .masthead-user {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-button.ghost {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  padding: 7px 12px;
-  font-weight: 600;
-  font-size: 0.82rem;
-}
-
-button.ghost:hover:not(:disabled) {
-  color: var(--text);
-  border-color: rgba(148, 163, 184, 0.45);
-  filter: none;
-}
-
-.auth-shell {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-}
-
-.auth-card {
-  width: min(400px, 100%);
-}
-
-.auth-card h1 {
-  margin-bottom: 22px;
-}
-
-.form {
-  display: grid;
-  gap: 2px;
-}
-
-.form button[type='submit'] {
-  width: 100%;
-  margin-top: 6px;
-}
-
-.eyebrow {
-  margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.24em;
-  font-size: 0.72rem;
-  color: var(--accent);
-}
-
-.back {
-  color: var(--muted);
-  text-decoration: none;
-  font-size: 0.9rem;
-}
-
-.back:hover {
-  color: var(--text);
-}
-
-h1 {
-  margin: 0;
-  font-size: 1.9rem;
-  letter-spacing: -0.02em;
-}
-
-h2 {
-  margin: 0 0 18px;
-  font-size: 1.05rem;
-  letter-spacing: 0.01em;
-}
-
-h3 {
-  margin: 24px 0 10px;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--muted);
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-h3 em {
-  font-style: normal;
-  color: var(--text);
-  background: rgba(148, 163, 184, 0.14);
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 0.85em;
+  font-size: 13px;
+  color: var(--fg-muted);
 }
 
 .grid {
   display: grid;
-  grid-template-columns: minmax(320px, 420px) 1fr;
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
   gap: 24px;
   align-items: start;
 }
 
-@media (max-width: 900px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
 }
 
-.card {
-  padding: 26px;
-  border-radius: 16px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+.queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.queue-header h2 {
+  margin: 0;
+}
+
+/* --- Controls --------------------------------------------------------------- */
+
+/* Three weights, and the page should only ever show one of the heaviest.
+   Default is the bordered secondary — most buttons in a list or a toolbar are
+   not the thing you came to do. */
+button {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+
+button:hover:not(:disabled) {
+  background: var(--surface-raised);
+  border-color: var(--fg-subtle);
+}
+
+button:disabled {
+  color: var(--fg-subtle);
+  border-color: var(--border);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+/* The inverse of the page. The brightest thing on a black screen is the action
+   you are meant to take, so there is at most one per view. */
+button.primary,
+.form button[type='submit'],
+.compose button[type='submit'] {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+
+button.primary:hover:not(:disabled),
+.form button[type='submit']:hover:not(:disabled),
+.compose button[type='submit']:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: #ffffff;
+}
+
+button.primary:disabled,
+.form button[type='submit']:disabled,
+.compose button[type='submit']:disabled {
+  background: var(--surface-raised);
+  border-color: var(--border);
+  color: var(--fg-subtle);
+}
+
+/* Quietest: present, reachable, not asking for attention. */
+button.ghost {
+  background: transparent;
+  color: var(--fg-muted);
+  border-color: transparent;
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+button.danger {
+  background: transparent;
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+}
+
+button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border-color: var(--red);
+}
+
+button.big {
+  height: 44px;
+  padding: 0 24px;
+  font-size: 15px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* --- Forms ------------------------------------------------------------------ */
+
+.form {
+  display: grid;
+  gap: 16px;
 }
 
 .field {
   display: grid;
-  gap: 7px;
-  margin-bottom: 18px;
-  font-size: 0.85rem;
-  font-weight: 600;
+  gap: 6px;
 }
 
 .field > span {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-muted);
 }
 
 .field em {
   font-style: normal;
-  font-weight: 400;
-  font-size: 0.78rem;
-  color: var(--muted);
+  font-size: 12px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
 }
 
 .field em.over {
-  color: var(--danger);
+  color: var(--red);
 }
 
 input,
 textarea,
-select,
-button {
-  font: inherit;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  padding: 10px 12px;
-  background: rgba(2, 6, 23, 0.55);
-  color: var(--text);
+select {
+  font-family: inherit;
+  font-size: 14px;
+  letter-spacing: -0.011em;
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  transition: border-color 120ms ease;
 }
 
-input[type='file'] {
-  padding: 9px;
-  font-size: 0.85rem;
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-subtle);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  /* The border itself brightens, which is the Geist affordance; the ring is
+     reserved for keyboard focus. */
+  border-color: var(--border-focus);
+  outline: none;
 }
 
 textarea {
   min-height: 96px;
   resize: vertical;
-  font-weight: 400;
 }
 
-select:focus,
-textarea:focus,
-input:focus {
-  outline: 2px solid rgba(56, 189, 248, 0.55);
-  outline-offset: 1px;
-}
-
-button {
+input[type='file'] {
+  padding: 8px;
+  color: var(--fg-muted);
   cursor: pointer;
-  background: var(--accent);
-  color: #082f49;
-  font-weight: 700;
-  border: none;
-  padding: 11px 16px;
 }
 
-button:hover:not(:disabled) {
-  filter: brightness(1.08);
+input[type='file']::file-selector-button {
+  font: inherit;
+  margin-right: 12px;
+  padding: 4px 10px;
+  color: var(--fg);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
 }
 
-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-button.danger {
-  background: rgba(248, 113, 113, 0.16);
-  color: var(--danger);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-}
-
+.form button[type='submit'],
 .compose button[type='submit'] {
   width: 100%;
+  margin-top: 4px;
 }
 
-.actions {
-  display: flex;
-  gap: 10px;
+/* --- Status ----------------------------------------------------------------- */
+
+.pill {
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  margin-top: 20px;
+  align-self: flex-start;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
-.hint {
-  color: var(--muted);
-  font-size: 0.88rem;
-  margin: 6px 0;
+.pill-ok,
+.pill-ready {
+  color: var(--green);
 }
 
-.media-summary {
-  display: grid;
-  gap: 4px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: rgba(56, 189, 248, 0.07);
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  margin-bottom: 16px;
-  font-size: 0.84rem;
+.pill-warn,
+.pill-validating,
+.pill-processing {
+  color: var(--amber);
 }
 
-.media-summary span {
-  color: var(--muted);
-}
-
-.issues {
-  margin: 0 0 16px;
-  padding-left: 18px;
-  font-size: 0.83rem;
-  color: var(--danger);
-}
-
-.issues code {
-  color: var(--warn);
-}
-
-.feedback {
-  margin-top: 14px;
-  padding: 10px 13px;
-  border-radius: 10px;
-  font-size: 0.86rem;
-}
-
-.feedback-ok {
-  background: rgba(52, 211, 153, 0.13);
-  color: var(--ok);
-}
-
-.feedback-error {
-  background: rgba(248, 113, 113, 0.13);
-  color: var(--danger);
-}
-
-.feedback-info {
-  background: rgba(56, 189, 248, 0.13);
-  color: var(--accent);
-}
-
-.queue-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.pill-bad,
+.pill-invalid {
+  color: var(--red);
 }
 
 .live {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  padding: 3px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-subtle);
+}
+
+.live::before {
+  content: '';
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
+  background: currentColor;
 }
 
 .live-on {
-  background: rgba(52, 211, 153, 0.14);
-  color: var(--ok);
+  color: var(--green);
 }
 
 .live-off {
-  background: rgba(251, 191, 36, 0.14);
-  color: var(--warn);
+  color: var(--amber);
 }
 
-.job-list {
+.feedback {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.feedback-ok {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 30%, transparent);
+}
+
+.feedback-error {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 30%, transparent);
+}
+
+.feedback-info {
+  color: var(--fg-muted);
+}
+
+.error {
+  margin: 0;
+  color: var(--red);
+  font-size: 14px;
+}
+
+.issues {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.issues code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.media-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.media-summary span {
+  font-family: var(--font-mono);
+}
+
+/* --- Queue ------------------------------------------------------------------ */
+
+.job-list,
+.account-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -336,206 +509,46 @@ button.danger {
   gap: 8px;
 }
 
-.job-row {
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: rgba(2, 6, 23, 0.4);
-  transition: border-color 120ms ease;
-}
-
-.job-row:hover {
-  border-color: rgba(56, 189, 248, 0.4);
-}
-
-.job-main {
-  display: grid;
-  gap: 5px;
-  padding: 13px 15px;
-  text-decoration: none;
-  color: inherit;
-}
-
-.job-caption {
-  font-size: 0.92rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.job-meta,
-.job-error {
-  font-size: 0.79rem;
-  color: var(--muted);
-}
-
-.job-error {
-  color: var(--danger);
-}
-
-.pill {
-  justify-self: start;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.16);
-  color: var(--muted);
-}
-
-.pill-queued,
-.pill-scheduled,
-.pill-validating {
-  background: rgba(56, 189, 248, 0.15);
-  color: var(--accent);
-}
-
-.pill-processing {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--warn);
-}
-
-.pill-completed,
-.pill-ready {
-  background: rgba(52, 211, 153, 0.15);
-  color: var(--ok);
-}
-
-.pill-failed,
-.pill-dead,
-.pill-invalid {
-  background: rgba(248, 113, 113, 0.15);
-  color: var(--danger);
-}
-
-.details {
-  display: grid;
-  grid-template-columns: 128px 1fr;
-  gap: 9px 14px;
-  margin: 0;
-  font-size: 0.87rem;
-}
-
-.details dt {
-  color: var(--muted);
-}
-
-.details dd {
-  margin: 0;
-  word-break: break-word;
-}
-
-.caption-block {
-  white-space: pre-wrap;
-}
-
-code {
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.85em;
-}
-
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 3px;
-  max-height: 560px;
-  overflow-y: auto;
-}
-
-.timeline-item {
-  display: grid;
-  grid-template-columns: 74px 56px 1fr;
-  gap: 10px;
-  align-items: baseline;
-  padding: 7px 9px;
-  border-radius: 8px;
-  font-size: 0.82rem;
-}
-
-.timeline-item:nth-child(odd) {
-  background: rgba(2, 6, 23, 0.35);
-}
-
-.timeline-item time {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.timeline-item .level {
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.level-info .level {
-  color: var(--accent);
-}
-
-.level-warn .level {
-  color: var(--warn);
-}
-
-.level-error .level {
-  color: var(--danger);
-}
-
-.level-debug .level {
-  color: var(--muted);
-}
-
-.timeline-item pre {
-  grid-column: 3;
-  margin: 6px 0 0;
-  padding: 8px 10px;
-  border-radius: 7px;
-  background: rgba(2, 6, 23, 0.6);
-  overflow-x: auto;
-  font-size: 0.76rem;
-  color: var(--muted);
-}
-
-/* --- Accounts --------------------------------------------------------------- */
-
-.accounts {
-  margin-bottom: 24px;
-}
-
-.account-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
+.job-row,
 .account-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.6fr) auto;
+  display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 16px;
+  padding: 12px 14px;
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.45);
+  border-radius: var(--radius);
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
+.job-row:hover,
+.account-row:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}
+
+.job-main,
 .account-main {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
+.job-caption,
 .account-name {
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .account-meta {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--fg-subtle);
+  font-family: var(--font-mono);
 }
 
 .account-session {
@@ -543,24 +556,144 @@ code {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  flex: 1;
 }
 
-.pill {
-  align-self: flex-start;
+.job-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--red);
+  font-family: var(--font-mono);
+}
+
+.accounts {
+  margin-bottom: 24px;
+}
+
+/* --- Job detail ------------------------------------------------------------- */
+
+.details {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 8px 20px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.details dt {
+  color: var(--fg-subtle);
+}
+
+.details dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.caption-block {
+  white-space: pre-wrap;
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 80px 56px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 12px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.timeline-item:nth-child(odd) {
+  background: var(--surface);
+}
+
+.timeline-item time {
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 600;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-item .level {
+  font-family: var(--font-mono);
+  font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid currentColor;
+  color: var(--fg-subtle);
 }
 
-.pill-ok { color: var(--ok); }
-.pill-warn { color: var(--warn); }
-.pill-bad { color: var(--danger); }
+.timeline-item pre {
+  grid-column: 3;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
-/* --- Onboarding dialog ------------------------------------------------------ */
+.level-debug .level {
+  color: var(--fg-subtle);
+}
+
+.level-info .level {
+  color: var(--blue);
+}
+
+.level-warn .level {
+  color: var(--amber);
+}
+
+.level-error .level {
+  color: var(--red);
+}
+
+/* --- Auth ------------------------------------------------------------------- */
+
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(380px, 100%);
+  padding: 32px;
+}
+
+.auth-card h1 {
+  margin-bottom: 24px;
+  font-size: 22px;
+}
+
+/* --- Onboarding ------------------------------------------------------------
+   The one place the design raises its voice. A live phone is the most
+   consequential thing this product shows, so it gets the whole viewport, a
+   monospaced serial so the operator can tell one device from another, and a
+   countdown that is legible from across a room.
+   --------------------------------------------------------------------------- */
 
 .onboarding-backdrop {
   position: fixed;
@@ -569,22 +702,20 @@ code {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Tight, because the phone screen inside wants every pixel of height. */
   padding: 16px;
-  background: rgba(2, 6, 23, 0.78);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
 }
 
 .onboarding-panel {
-  /* Wide enough for a portrait phone plus ws-scrcpy's control column. */
   width: min(1100px, 100%);
   max-height: calc(100vh - 32px);
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background: var(--panel);
-  box-shadow: 0 32px 80px rgba(2, 6, 23, 0.6);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
   overflow: hidden;
 }
 
@@ -593,13 +724,13 @@ code {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 20px 24px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border);
 }
 
 .onboarding-header h2 {
-  margin: 2px 0 0;
-  font-size: 20px;
+  margin: 0;
+  font-size: 18px;
 }
 
 .onboarding-header-right {
@@ -609,7 +740,7 @@ code {
 }
 
 .onboarding-body {
-  padding: 24px;
+  padding: 20px;
   overflow-y: auto;
 }
 
@@ -625,9 +756,9 @@ code {
 
 .onboarding-lead {
   margin: 0;
-  font-size: 16px;
-  max-width: 52ch;
-  line-height: 1.5;
+  font-size: 15px;
+  max-width: 46ch;
+  line-height: 1.6;
 }
 
 .onboarding-live {
@@ -642,24 +773,21 @@ code {
   width: 100%;
   height: min(78vh, 860px);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: #000;
-  /* The viewer is a separate document, so this background only shows before it
-     paints. When the bridge is unreachable the browser renders its own error
-     page inside — color-scheme keeps that dark instead of flashing a
-     full-height white rectangle at the operator. */
   color-scheme: dark;
 }
 
 .onboarding-placeholder {
   display: grid;
   place-items: center;
+  align-content: center;
   gap: 8px;
   text-align: center;
   min-height: 240px;
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  padding: 24px;
+  padding: 32px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
 }
 
 .onboarding-actions {
@@ -672,28 +800,36 @@ code {
 .onboarding-badge {
   display: grid;
   place-items: center;
-  width: 52px;
-  height: 52px;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
-  font-size: 26px;
-  font-weight: 700;
-  border: 2px solid currentColor;
+  font-size: 20px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
-.onboarding-badge-ok { color: var(--ok); }
-.onboarding-badge-bad { color: var(--danger); }
+.onboarding-badge-ok {
+  color: var(--green);
+}
+
+.onboarding-badge-bad {
+  color: var(--red);
+}
 
 .onboarding-spinner {
-  width: 34px;
-  height: 34px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent);
-  animation: onboarding-spin 900ms linear infinite;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--fg);
+  animation: onboarding-spin 700ms linear infinite;
 }
 
 @keyframes onboarding-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* --- Countdown -------------------------------------------------------------- */
@@ -701,60 +837,96 @@ code {
 .countdown {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .countdown-track {
-  height: 6px;
+  height: 2px;
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.18);
+  background: var(--border-strong);
   overflow: hidden;
 }
 
 .countdown-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--fg);
   transition: width 1s linear;
 }
 
 .countdown-urgent .countdown-fill {
-  background: var(--danger);
+  background: var(--red);
 }
 
 .countdown-label {
   margin: 0;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.countdown-urgent .countdown-label {
-  color: var(--danger);
+.countdown-label strong {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--fg);
 }
 
-button.big {
-  font-size: 16px;
-  padding: 12px 28px;
+.countdown-urgent .countdown-label,
+.countdown-urgent .countdown-label strong {
+  color: var(--red);
 }
 
-button.ghost {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text);
-}
+/* --- Responsive & motion ---------------------------------------------------- */
 
-/* Motion is decoration here; the countdown text still carries the information. */
-@media (prefers-reduced-motion: reduce) {
-  .onboarding-spinner { animation: none; }
-  .countdown-fill { transition: none; }
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 720px) {
+  .shell {
+    padding: 24px 16px 64px;
+  }
+
+  .job-row,
   .account-row {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
     gap: 10px;
   }
 
+  .details {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px 0;
+  }
+
+  .details dt {
+    margin-top: 10px;
+  }
+
+  .timeline-item {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .timeline-item .level {
+    grid-column: 2;
+  }
+
+  .timeline-item pre {
+    grid-column: 1 / -1;
+  }
+
   .onboarding-screen {
-    height: 55vh;
+    height: 62vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
