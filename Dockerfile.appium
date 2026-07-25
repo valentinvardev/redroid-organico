@@ -16,16 +16,18 @@ RUN apt-get update \
 # Baked in at build time so a container start never reaches out to the network.
 # The uiautomator2 driver bundles its server APKs, which is most of the weight.
 #
-# Neither is pinned on purpose: the driver declares which server major it needs,
-# and pinning one of the two independently is how you get "uiautomator2 cannot
-# be installed because the server version it requires does not meet the
-# installed one". Letting npm resolve the pair keeps them consistent. The
-# version check below prints what was actually resolved, so a build log records
-# the combination that worked.
+# Pinned as a *pair*, which is the only way that means anything here: the driver
+# declares which server major it needs, so pinning one independently produces
+# "uiautomator2 cannot be installed because the server version it requires does
+# not meet the currently installed one". This combination was verified booting
+# on Ubuntu 26.04 / Graviton arm64. Bump both together, never one.
+ARG APPIUM_VERSION=3.6.0
+ARG UIAUTOMATOR2_VERSION=8.1.2
+
 ENV APPIUM_HOME=/opt/appium
 RUN mkdir -p "$APPIUM_HOME" \
- && npm install -g appium \
- && appium driver install uiautomator2 \
+ && npm install -g "appium@${APPIUM_VERSION}" \
+ && appium driver install "uiautomator2@${UIAUTOMATOR2_VERSION}" \
  && appium --version \
  && appium driver list --installed
 
