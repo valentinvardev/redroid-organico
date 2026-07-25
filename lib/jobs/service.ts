@@ -1,0 +1,230 @@
+import { randomUUID } from 'crypto';
+import { Prisma, type Job, JobStatus } from '@prisma/client';
+import { prisma } from '@/lib/db';
+import { jobLogger } from '@/lib/logging/jobLogger';
+import { getPublishQueue, type PublishJobData } from '@/lib/queue/publishQueue';
+
+export class JobConflictError extends Error {
+  constructor(message: string, readonly existingJobId: string) {
+    super(message);
+    this.name = 'JobConflictError';
+  }
+}
+
+export class JobValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'JobValidationError';
+  }
+}
+
+const ACTIVE_STATUSES: JobStatus[] = [JobStatus.QUEUED, JobStatus.SCHEDULED, JobStatus.PROCESSING];
+
+export interface CreatePublishJobInput {
+  userId: string;
+  accountId: string;
+  videoId: string;
+  caption: string;
+  /**
+   * Supplied by the client so that a retried or double-submitted request
+   * resolves to the same job instead of creating a second publication.
+   */
+  idempotencyKey?: string;
+  scheduledAt?: Date | null;
+}
+
+export interface CreatePublishJobResult {
+  job: Job;
+  /** False when an existing job was returned for a repeated idempotency key. */
+  created: boolean;
+}
+
+export async function createPublishJob(input: CreatePublishJobInput): Promise<CreatePublishJobResult> {
+  const caption = input.caption.trim();
+
+  if (caption.length === 0) {
+    throw new JobValidationError('Caption must not be empty');
+  }
+
+  if (caption.length > 2_200) {
+    throw new JobValidationError(`Caption is ${caption.length} characters, limit is 2200`);
+  }
+
+  if (input.scheduledAt && Number.isNaN(input.scheduledAt.getTime())) {
+    throw new JobValidationError('scheduledAt is not a valid date');
+  }
+
+  const idempotencyKey = input.idempotencyKey?.trim() || randomUUID();
+
+  const existingByKey = await prisma.job.findUnique({ where: { idempotencyKey } });
+
+  if (existingByKey) {
+    return { job: existingByKey, created: false };
+  }
+
+  const [account, video] = await Promise.all([
+    prisma.account.findFirst({ where: { id: input.accountId, userId: input.userId } }),
+    prisma.video.findFirst({ where: { id: input.videoId, userId: input.userId } }),
+  ]);
+
+  if (!account) {
+    throw new JobValidationError(`Account ${input.accountId} not found`);
+  }
+
+  if (account.status !== 'ACTIVE') {
+    throw new JobValidationError(`Account ${account.name} is ${account.status.toLowerCase()}`);
+  }
+
+  if (!video) {
+    throw new JobValidationError(`Video ${input.videoId} not found`);
+  }
+
+  if (video.status !== 'READY') {
+    throw new JobValidationError(`Video is ${video.status.toLowerCase()}, expected READY`);
+  }
+
+  // A different request already publishing this video to this account is a
+  // duplicate. Rows carrying *this* key are excluded deliberately: a concurrent
+  // request with the same key may have committed between the lookup above and
+  // here, and that is idempotency working, not a conflict — it falls through to
+  // the create below, where the unique constraint resolves both callers to one
+  // job. Without this exclusion the loser of that race gets a spurious 409.
+  const inFlight = await prisma.job.findFirst({
+    where: {
+      accountId: account.id,
+      videoId: video.id,
+      status: { in: ACTIVE_STATUSES },
+      idempotencyKey: { not: idempotencyKey },
+    },
+  });
+
+  if (inFlight) {
+    throw new JobConflictError(
+      `Video ${video.id} is already ${inFlight.status.toLowerCase()} for this account`,
+      inFlight.id,
+    );
+  }
+
+  const scheduled = input.scheduledAt && input.scheduledAt.getTime() > Date.now();
+
+  let job: Job;
+
+  try {
+    job = await prisma.job.create({
+      data: {
+        userId: input.userId,
+        accountId: account.id,
+        videoId: video.id,
+        caption,
+        idempotencyKey,
+        status: scheduled ? JobStatus.SCHEDULED : JobStatus.QUEUED,
+        scheduledAt: scheduled ? input.scheduledAt : null,
+      },
+    });
+  } catch (error) {
+    // Two concurrent requests carrying the same key: the loser reads the row
+    // the winner just wrote instead of surfacing a constraint violation.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const winner = await prisma.job.findUnique({ where: { idempotencyKey } });
+
+      if (winner) {
+        return { job: winner, created: false };
+      }
+    }
+
+    throw error;
+  }
+
+  await enqueue(job);
+
+  return { job, created: true };
+}
+
+async function enqueue(job: Job): Promise<void> {
+  const delay = job.scheduledAt ? Math.max(0, job.scheduledAt.getTime() - Date.now()) : 0;
+
+  const queued = await getPublishQueue().add(
+    'publish',
+    { jobId: job.id } satisfies PublishJobData,
+    {
+      // Reusing the database id as the BullMQ id means an accidental re-enqueue
+      // of the same job is dropped by Redis rather than processed twice.
+      jobId: job.id,
+      delay,
+    },
+  );
+
+  await prisma.job.update({
+    where: { id: job.id },
+    data: { bullJobId: queued.id },
+  });
+
+  await jobLogger(job.id).info(
+    delay > 0 ? 'Job scheduled' : 'Job queued',
+    delay > 0 ? { scheduledAt: job.scheduledAt?.toISOString(), delayMs: delay } : undefined,
+  );
+}
+
+export async function cancelJob(userId: string, jobId: string): Promise<Job> {
+  const job = await prisma.job.findFirst({ where: { id: jobId, userId } });
+
+  if (!job) {
+    throw new JobValidationError(`Job ${jobId} not found`);
+  }
+
+  if (!ACTIVE_STATUSES.includes(job.status)) {
+    throw new JobValidationError(`Job is ${job.status.toLowerCase()} and cannot be cancelled`);
+  }
+
+  if (job.bullJobId) {
+    const queued = await getPublishQueue().getJob(job.bullJobId);
+    // A job already picked up by a worker cannot be removed; the worker checks
+    // for CANCELLED before it publishes and aborts there.
+    await queued?.remove().catch(() => undefined);
+  }
+
+  const updated = await prisma.job.update({
+    where: { id: job.id },
+    data: { status: JobStatus.CANCELLED, completedAt: new Date() },
+  });
+
+  await jobLogger(job.id).warn('Job cancelled by user');
+
+  return updated;
+}
+
+export async function retryJob(userId: string, jobId: string): Promise<Job> {
+  const job = await prisma.job.findFirst({ where: { id: jobId, userId } });
+
+  if (!job) {
+    throw new JobValidationError(`Job ${jobId} not found`);
+  }
+
+  if (job.status !== JobStatus.FAILED && job.status !== JobStatus.DEAD) {
+    throw new JobValidationError(`Only failed jobs can be retried, this one is ${job.status.toLowerCase()}`);
+  }
+
+  const reset = await prisma.job.update({
+    where: { id: job.id },
+    data: {
+      status: JobStatus.QUEUED,
+      attempts: 0,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      scheduledAt: null,
+    },
+  });
+
+  // The previous BullMQ record still occupies this id; drop it so the re-add
+  // is not silently ignored as a duplicate.
+  await getPublishQueue()
+    .getJob(job.id)
+    .then((existing) => existing?.remove())
+    .catch(() => undefined);
+
+  await jobLogger(job.id).info('Job re-queued manually');
+  await enqueue(reset);
+
+  return reset;
+}

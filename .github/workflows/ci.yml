@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: redroid
+          POSTGRES_PASSWORD: redroid
+          POSTGRES_DB: redroid
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U redroid"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      # Mirrors .env.test so the suite and the build see the same topology as a
+      # developer machine running docker-compose.dev.yml.
+      DATABASE_URL: postgresql://redroid:redroid@localhost:5433/redroid_test?schema=public
+      REDIS_URL: redis://localhost:6379/1
+      # Must decode to exactly 32 bytes; keep in sync with .env.test.
+      CREDENTIALS_KEY: cmVkcm9pZC1vcmdhbmljby10ZXN0LWtleS0zMmJ5dGU=
+      STORAGE_DRIVER: local
+      STORAGE_LOCAL_DIR: ./.storage-test
+      PUBLISHER_DRIVER: stub
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # The media pipeline probes and thumbnails with these; without them the
+      # validation tests would silently skip instead of running.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Create and migrate the test database
+        run: npm run test:setup
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run smoke
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Build
+        run: npm run build

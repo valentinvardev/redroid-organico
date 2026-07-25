@@ -1,0 +1,102 @@
+name: redroid-organico
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: redroid
+      POSTGRES_PASSWORD: redroid
+      POSTGRES_DB: redroid
+    # 5433 on the host to avoid colliding with a native PostgreSQL install on
+    # 5432. Containers still reach it as postgres:5432 over the compose network.
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U redroid -d redroid"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # appendonly keeps delayed/scheduled jobs across a restart; without it a
+    # container bounce silently drops everything not yet picked up.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      target: runtime
+    command: ["npx", "prisma", "migrate", "deploy"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://redroid:redroid@postgres:5432/redroid?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build:
+      context: .
+      target: runtime
+    command: ["npm", "run", "start"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://redroid:redroid@postgres:5432/redroid?schema=public
+      REDIS_URL: redis://redis:6379
+      STORAGE_LOCAL_DIR: /app/.storage
+    ports:
+      - "3000:3000"
+    volumes:
+      - media:/app/.storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    command: ["npm", "run", "worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://redroid:redroid@postgres:5432/redroid?schema=public
+      REDIS_URL: redis://redis:6379
+      STORAGE_LOCAL_DIR: /app/.storage
+    # The worker reads media the web container wrote, so both mount the same
+    # volume. Moving STORAGE_DRIVER to s3 removes this coupling.
+    volumes:
+      - media:/app/.storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # Give in-flight jobs room to finish on `docker compose down` rather than
+    # being SIGKILLed into a stuck PROCESSING row.
+    stop_grace_period: 60s
+
+volumes:
+  postgres_data:
+  redis_data:
+  media:

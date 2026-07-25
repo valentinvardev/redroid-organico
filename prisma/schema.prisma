@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 no longer accepts `url` here. The migration/introspection URL lives
+// in prisma.config.ts; the runtime client gets its connection from the pg
+// driver adapter in lib/db.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+enum Platform {
+  TIKTOK
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+  NEEDS_REAUTH
+}
+
+enum VideoStatus {
+  UPLOADING
+  VALIDATING
+  READY
+  INVALID
+}
+
+enum JobStatus {
+  QUEUED
+  SCHEDULED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  DEAD
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+model User {
+  id    String  @id @default(cuid())
+  email String  @unique
+  name  String?
+
+  /// scrypt: N$r$p$salt$derivedKey, all base64. See lib/auth/password.ts.
+  /// Null means the account cannot log in with a password.
+  passwordHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
+  videos   Video[]
+  jobs     Job[]
+  sessions Session[]
+
+  @@map("users")
+}
+
+model Session {
+  /// SHA-256 of the cookie value. The raw token is never stored, so a dump of
+  /// this table cannot be replayed as a login.
+  tokenHash String   @id
+  userId    String
+  expiresAt DateTime
+
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Account {
+  id       String        @id @default(cuid())
+  userId   String
+  name     String
+  platform Platform      @default(TIKTOK)
+  status   AccountStatus @default(ACTIVE)
+
+  /// Platform-side identifier returned by the provider after OAuth.
+  externalId String?
+
+  /// AES-256-GCM envelope: iv(12) || tag(16) || ciphertext.
+  /// Never logged, never returned by the API. See lib/crypto/secretBox.ts.
+  credentials Bytes?
+
+  tokenExpiresAt DateTime?
+
+  /// Per-account throttling, enforced by the worker's rate limiter (M4).
+  maxConcurrent      Int @default(1)
+  minIntervalSeconds Int @default(60)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobs Job[]
+
+  @@unique([userId, platform, externalId])
+  @@index([userId])
+  @@index([status])
+  @@map("accounts")
+}
+
+model Video {
+  id     String @id @default(cuid())
+  userId String
+
+  fileName      String
+  storageKey    String
+  storageDriver String @default("local")
+  mimeType      String
+  sizeBytes     BigInt
+
+  durationSeconds Float?
+  width           Int?
+  height          Int?
+
+  /// SHA-256 of the uploaded bytes, used to deduplicate re-uploads.
+  checksumSha256 String?
+  thumbnailKey   String?
+
+  status           VideoStatus @default(UPLOADING)
+  validationErrors Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobs Job[]
+
+  @@unique([userId, checksumSha256])
+  @@index([userId, createdAt])
+  @@map("videos")
+}
+
+model Job {
+  id        String @id @default(cuid())
+  userId    String
+  accountId String
+  videoId   String
+
+  caption String @db.Text
+
+  status JobStatus @default(QUEUED)
+
+  /// Set by the API before enqueueing. The unique constraint is what makes a
+  /// retry — from BullMQ or from a double-clicked button — impossible to turn
+  /// into a duplicate publication.
+  idempotencyKey String @unique
+
+  queueName String @default("publish")
+  bullJobId String?
+
+  attempts    Int @default(0)
+  maxAttempts Int @default(3)
+
+  /// Null means "publish as soon as a worker is free".
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  /// Identifier of the resulting post on the platform, when publishing succeeds.
+  externalPostId String?
+  errorMessage   String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  video   Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  logs    JobLog[]
+
+  @@index([status])
+  @@index([accountId, status])
+  @@index([userId, createdAt])
+  @@index([scheduledAt])
+  @@map("jobs")
+}
+
+model JobLog {
+  id      String   @id @default(cuid())
+  jobId   String
+  level   LogLevel @default(INFO)
+  message String   @db.Text
+  data    Json?
+
+  createdAt DateTime @default(now())
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@map("job_logs")
+}

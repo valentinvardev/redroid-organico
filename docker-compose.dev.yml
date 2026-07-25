@@ -1,0 +1,39 @@
+name: redroid-organico-dev
+
+# Datastores only. Run the app and worker on the host with `npm run dev` and
+# `npm run worker:dev` so edits reload without rebuilding an image.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: redroid
+      POSTGRES_PASSWORD: redroid
+      POSTGRES_DB: redroid
+    # 5433 on the host: this machine already runs a PostgreSQL 17 service on
+    # 5432, and binding both would fail to start.
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U redroid -d redroid"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_dev:
+  redis_dev:

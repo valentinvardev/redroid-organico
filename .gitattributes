@@ -1,0 +1,19 @@
+# Normalise line endings in the repository to LF regardless of the platform the
+# commit came from. Without this, a Windows checkout stages CRLF and every file
+# looks modified to a collaborator on Linux.
+* text=auto eol=lf
+
+# Binary: never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mp4 binary
+*.webm binary
+*.mov binary
+*.woff binary
+*.woff2 binary
+
+# Generated; keep diffs collapsed in reviews.
+package-lock.json linguist-generated=true -diff
