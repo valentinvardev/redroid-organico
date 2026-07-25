@@ -128,6 +128,11 @@ services:
       # `-a` already makes it listen on all interfaces inside the container.
       # Only needed when the worker runs on the host rather than in compose.
       - "127.0.0.1:5037:5037"
+      # Ports of the services that share this container's network namespace.
+      # Everything that reaches a device through `adb forward` has to live in
+      # this namespace — see the note on ws-scrcpy.
+      - "8000:8000"
+      - "4723:4723"
     networks:
       - redroid
     healthcheck:
@@ -144,13 +149,17 @@ services:
       context: .
       dockerfile: Dockerfile.appium
     environment:
-      # Point Appium's adb client at the shared server rather than its own.
-      ANDROID_ADB_SERVER_HOST: adb-server
+      # Loopback, because this shares the adb server's network namespace.
+      ANDROID_ADB_SERVER_ADDRESS: 127.0.0.1
+      ANDROID_ADB_SERVER_HOST: 127.0.0.1
       ANDROID_ADB_SERVER_PORT: "5037"
-    ports:
-      - "4723:4723"
-    networks:
-      - redroid
+    # Same requirement as ws-scrcpy: the UiAutomator2 driver reaches its
+    # on-device server through `adb forward`, and that listener opens on the
+    # machine running the adb server. Split namespaces would leave Appium
+    # dialling an empty loopback.
+    #
+    # Port 4723 is published on adb-server.
+    network_mode: "service:adb-server"
     depends_on:
       adb-server:
         condition: service_healthy
@@ -168,19 +177,21 @@ services:
       context: .
       dockerfile: Dockerfile.ws-scrcpy
     environment:
-      # adbkit and the Android tools disagree on which variable names they read,
-      # and getting it wrong shows up as an empty device list rather than an
-      # error. All four are set so whichever the build honours is correct.
-      ADB_HOST: adb-server
+      ADB_HOST: 127.0.0.1
       ADB_PORT: "5037"
-      ANDROID_ADB_SERVER_HOST: adb-server
+      ANDROID_ADB_SERVER_ADDRESS: 127.0.0.1
       ANDROID_ADB_SERVER_PORT: "5037"
-    ports:
-      # Reached from the operator's browser, not from another container, so this
-      # must be published on whatever host the dashboard is served from.
-      - "8000:8000"
-    networks:
-      - redroid
+    # Shares the adb server's network namespace, which is not a shortcut but a
+    # requirement: to stream, ws-scrcpy asks adb to forward a local port to the
+    # device, and `adb forward` opens that listener on whichever machine runs
+    # the adb *server*. With separate namespaces the port opens inside
+    # adb-server while ws-scrcpy dials its own empty loopback and gets
+    # ECONNREFUSED on 127.0.0.1:8001 — a viewer that loads, connects, and shows
+    # grey. Sharing the namespace makes both sides mean the same 127.0.0.1.
+    #
+    # Consequence: this service declares no ports or networks of its own; port
+    # 8000 is published on adb-server above.
+    network_mode: "service:adb-server"
     depends_on:
       adb-server:
         condition: service_healthy
