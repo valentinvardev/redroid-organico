@@ -122,6 +122,12 @@ services:
       context: .
       target: runtime
     command: ["adb", "-a", "-P", "5037", "nodaemon", "server"]
+    ports:
+      # Bound to loopback deliberately. An adb server reachable from the
+      # internet is remote code execution on every device attached to it, and
+      # `-a` already makes it listen on all interfaces inside the container.
+      # Only needed when the worker runs on the host rather than in compose.
+      - "127.0.0.1:5037:5037"
     networks:
       - redroid
     healthcheck:
