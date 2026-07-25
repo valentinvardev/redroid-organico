@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { Prisma, type Job, JobStatus, JobType } from '@prisma/client';
+import { Prisma, type Job, JobStatus, JobType, SessionState } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { jobLogger } from '@/lib/logging/jobLogger';
 import { signalHumanDone } from '@/lib/onboarding/signal';
@@ -223,6 +223,17 @@ export async function createOnboardingJob(input: CreateOnboardingJobInput): Prom
       `Account ${account.name} already has a job ${inFlight.status.toLowerCase()}`,
       inFlight.id,
     );
+  }
+
+  // Self-heal: no job is running for this account, so an ONBOARDING session
+  // state is a leftover from a run that died without cleaning up. Left alone it
+  // is permanent — the dashboard refuses to start a link while the account
+  // claims one is in progress, which is exactly when you need to start one.
+  if (account.sessionState === SessionState.ONBOARDING) {
+    await prisma.account.update({
+      where: { id: account.id },
+      data: { sessionState: SessionState.NONE },
+    });
   }
 
   let job: Job;

@@ -264,6 +264,38 @@ describe('interactive onboarding', () => {
     assert.equal(account.sessionState, SessionState.NONE, 'the account must be linkable again');
   });
 
+  it('frees the account when the driver throws instead of returning an outcome', async () => {
+    const { job } = await createOnboardingJob({ userId, accountId });
+
+    const exploding: OnboardingDriver = {
+      name: 'exploding',
+      async onboard() {
+        throw new Error('the container never booted');
+      },
+    };
+
+    await assert.rejects(processJob(bullJobFor(job.id), { onboardingDriver: exploding }));
+
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+
+    // Left ONBOARDING, the dashboard would refuse to start another link — one
+    // crashed run permanently disabling the account.
+    assert.equal(account.sessionState, SessionState.NONE);
+  });
+
+  it('unsticks an account whose previous run died mid-onboarding', async () => {
+    await prisma.account.update({
+      where: { id: accountId },
+      data: { sessionState: SessionState.ONBOARDING },
+    });
+
+    const { job } = await createOnboardingJob({ userId, accountId });
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+
+    assert.ok(job.id);
+    assert.equal(account.sessionState, SessionState.NONE, 'a stale ONBOARDING must not block a new link');
+  });
+
   it('refuses to confirm a job that is not waiting for anyone', async () => {
     const { job } = await createOnboardingJob({ userId, accountId });
 

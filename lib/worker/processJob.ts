@@ -14,6 +14,7 @@ import { getOnboardingDriver, getPublisher } from '@/lib/publisher/registry';
 import type {
   DeviceEndpoint,
   OnboardingDriver,
+  OnboardingResult,
   PublisherAccount,
   Publisher,
 } from '@/lib/publisher/types';
@@ -224,48 +225,62 @@ async function runOnboarding(
     data: { sessionState: SessionState.ONBOARDING },
   });
 
-  const result = await driver.onboard({
-    jobId: job.id,
-    account: publisherAccount(job),
-    log,
-    signal,
+  let result: OnboardingResult;
 
-    onDeviceReady: async (endpoint: DeviceEndpoint) => {
-      // Publishing the endpoint and flipping the status are one step: the UI
-      // polls for AWAITING_HUMAN and would otherwise read a status with no
-      // endpoint next to it.
-      await prisma.job.update({
-        where: { id: job.id },
-        data: {
-          status: JobStatus.AWAITING_HUMAN,
-          deviceEndpoint: endpoint as unknown as Prisma.InputJsonValue,
-          awaitingSince: new Date(),
-          expiresAt: new Date(Date.now() + timeoutMs),
-        },
-      });
+  try {
+    result = await driver.onboard({
+      jobId: job.id,
+      account: publisherAccount(job),
+      log,
+      signal,
 
-      await log.info('Device is ready for the operator', {
-        serial: endpoint.serial,
-        viewerUrl: endpoint.viewerUrl,
-      });
-    },
-
-    awaitHuman: async () => {
-      const outcome = await waitForHuman(job.id, { timeoutMs, signal });
-
-      // The natural seam for the transition: the person is done and the driver
-      // is about to run the verification flow. Anything else ends the job, so
-      // there is nothing to announce.
-      if (outcome.kind === 'confirmed') {
+      onDeviceReady: async (endpoint: DeviceEndpoint) => {
+        // Publishing the endpoint and flipping the status are one step: the UI
+        // polls for AWAITING_HUMAN and would otherwise read a status with no
+        // endpoint next to it.
         await prisma.job.update({
           where: { id: job.id },
-          data: { status: JobStatus.VERIFYING },
+          data: {
+            status: JobStatus.AWAITING_HUMAN,
+            deviceEndpoint: endpoint as unknown as Prisma.InputJsonValue,
+            awaitingSince: new Date(),
+            expiresAt: new Date(Date.now() + timeoutMs),
+          },
         });
-      }
 
-      return outcome;
-    },
-  });
+        await log.info('Device is ready for the operator', {
+          serial: endpoint.serial,
+          viewerUrl: endpoint.viewerUrl,
+        });
+      },
+
+      awaitHuman: async () => {
+        const outcome = await waitForHuman(job.id, { timeoutMs, signal });
+
+        // The natural seam for the transition: the person is done and the
+        // driver is about to run the verification flow. Anything else ends the
+        // job, so there is nothing to announce.
+        if (outcome.kind === 'confirmed') {
+          await prisma.job.update({
+            where: { id: job.id },
+            data: { status: JobStatus.VERIFYING },
+          });
+        }
+
+        return outcome;
+      },
+    });
+  } catch (error) {
+    // A throw here — a container that never booted, a missing app — skips
+    // finishOnboarding entirely and would leave the account ONBOARDING for
+    // good. The dashboard disables linking in that state, so a single crashed
+    // run made the account permanently unusable.
+    await prisma.account
+      .update({ where: { id: job.accountId }, data: { sessionState: SessionState.NONE } })
+      .catch(() => undefined);
+
+    throw error;
+  }
 
   await finishOnboarding(job, result.outcome, result.details);
 }
