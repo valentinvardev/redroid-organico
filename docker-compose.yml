@@ -138,8 +138,11 @@ services:
 
   appium:
     profiles: ["android"]
-    image: appium/appium:v2.11.3
-    command: ["appium", "--address", "0.0.0.0", "--port", "4723", "--relaxed-security"]
+    # Built rather than pulled: the published appium/appium tags are amd64-only,
+    # which on an ARM host means qemu emulation for the server and its adb.
+    build:
+      context: .
+      dockerfile: Dockerfile.appium
     environment:
       # Point Appium's adb client at the shared server rather than its own.
       ANDROID_ADB_SERVER_HOST: adb-server

@@ -1,0 +1,29 @@
+# Appium built from npm rather than pulled as an image.
+#
+# The official appium/appium tags are amd64-only, which on Graviton means qemu
+# emulation for the server *and* for the adb it shells out to — unusable for UI
+# automation. Building from the npm package gives a native image on whatever
+# architecture the host is, and removes the dependency on a third-party tag
+# staying published.
+FROM node:20-bookworm-slim
+
+# adb is what the UiAutomator2 driver shells out to. It talks to the shared adb
+# server over ANDROID_ADB_SERVER_HOST rather than starting one of its own.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends adb ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Baked in at build time so a container start never reaches out to the network.
+# The uiautomator2 driver bundles its server APKs, which is most of the weight.
+ENV APPIUM_HOME=/opt/appium
+RUN mkdir -p "$APPIUM_HOME" \
+ && npm install -g appium@2 \
+ && appium driver install uiautomator2 \
+ && appium driver list --installed
+
+EXPOSE 4723
+
+# --relaxed-security enables the driver features that need shell access on the
+# device. Acceptable because this server is never exposed outside the compose
+# network; do not publish 4723 to a public interface.
+CMD ["appium", "--address", "0.0.0.0", "--port", "4723", "--relaxed-security"]
