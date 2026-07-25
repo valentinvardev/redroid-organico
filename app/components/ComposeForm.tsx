@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useRef, useState } from 'react';
+import { randomId } from './randomId';
 
 interface AccountOption {
   id: string;
@@ -42,7 +43,7 @@ export function ComposeForm() {
   const fileInput = useRef<HTMLInputElement>(null);
   // Regenerated only after a successful submit, so a double-click or a retry of
   // a failed request resolves to the same job instead of a second publication.
-  const idempotencyKey = useRef(crypto.randomUUID());
+  const idempotencyKey = useRef(randomId());
 
   useEffect(() => {
     fetch('/api/accounts')
@@ -123,7 +124,7 @@ export function ComposeForm() {
       }
 
       setFeedback({ kind: 'ok', text: data.message });
-      idempotencyKey.current = crypto.randomUUID();
+      idempotencyKey.current = randomId();
       setCaption('');
       setScheduledAt('');
       setVideo(null);

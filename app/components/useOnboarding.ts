@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { randomId } from './randomId';
 
 export interface DeviceEndpoint {
   serial: string;
@@ -268,7 +269,7 @@ export function useOnboarding(accountId: string): UseOnboarding {
     try {
       const response = await fetch(`/api/accounts/${accountId}/onboarding`, {
         method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        headers: { 'Idempotency-Key': randomId() },
       });
 
       const body = await response.json();
