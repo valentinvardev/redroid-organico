@@ -211,9 +211,15 @@ export class EphemeralRedroidProvider implements DeviceProvider {
 
       return { device, serial, release };
     } catch (error) {
+      // Read the logs before tearing anything down. Doing this after release()
+      // means every failure report says "No such container" instead of showing
+      // why the container was unhappy — the diagnostic destroyed by the cleanup
+      // it was meant to explain.
+      const enriched = await this.enrich(error, name);
+
       // Acquisition failed, so nobody downstream will ever call release().
       await release();
-      throw await this.enrich(error, name);
+      throw enriched;
     }
   }
 
