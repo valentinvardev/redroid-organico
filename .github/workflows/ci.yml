@@ -46,9 +46,11 @@ jobs:
       PUBLISHER_DRIVER: stub
 
     steps:
-      - uses: actions/checkout@v4
+      # v5: the v4 actions run on Node 20, which GitHub deprecated on its
+      # runners and now force onto Node 24 with a warning.
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm

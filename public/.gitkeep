@@ -1,0 +1,5 @@
+Static assets served at the site root (favicon, robots.txt, images).
+
+Kept in the repository even while empty so the Dockerfile's `COPY public ./public`
+always resolves — otherwise adding the first asset here would silently not reach
+the production image.

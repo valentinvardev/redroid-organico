@@ -30,7 +30,13 @@ ENV NODE_ENV=production
 # Migrations run from the image, so the Prisma CLI and schema must be present.
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
+
+# Both halves of the generated client are required. @prisma/client is the thin
+# entry point; the code and query engine it loads live in node_modules/.prisma,
+# which `npm ci` alone does not produce. Copying only the former fails at
+# runtime with "Cannot find module '.prisma/client/default'".
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY package.json prisma.config.ts tsconfig.json next.config.mjs* ./
 COPY prisma ./prisma
 COPY public ./public

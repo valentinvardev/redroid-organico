@@ -25,17 +25,15 @@ Ejecutado y comprobado contra infraestructura real:
 - Flujo de autenticación completo: 401 sin sesión, 429 al noveno login fallido,
   cambio de contraseña con invalidación de sesiones
 - Rotación de claves con re-sellado
+- **El stack completo en contenedores.** `docker compose up --build` levanta
+  Postgres, Redis, aplica migraciones y arranca web y worker; el healthcheck de
+  `web` pasa y un ciclo de publicación corre de punta a punta dentro de la imagen,
+  con su propio ffmpeg.
+- **El workflow de CI**, verde en GitHub Actions.
 
-Escrito pero **sin ejecutar nunca**:
-
-- **El `Dockerfile` y el `docker-compose.yml` completo.** El desarrollo usó solo
-  el compose de datastores; la imagen de producción, el contenedor de migraciones
-  y el healthcheck están sin construir.
-- **El workflow de CI.** Existe el archivo, pero nunca corrió, así que no hay
-  garantía de que `test:setup`, el ffmpeg de Ubuntu y los servicios se comporten
-  como espera.
-- **Despliegue y HTTPS.** Nunca se desplegó. La cookie se marca `secure` sola con
-  `NODE_ENV=production`, pero eso requiere TLS delante.
+Lo único sin verificar es el **despliegue con HTTPS**. La cookie se marca `secure`
+sola con `NODE_ENV=production`, pero eso requiere TLS delante y nunca se desplegó
+en ningún lado.
 
 ## Requisitos
 
