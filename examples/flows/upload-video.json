@@ -1,0 +1,61 @@
+[
+  {
+    "action": "tap",
+    "name": "dismiss notification permission",
+    "using": "id",
+    "value": "com.android.permissioncontroller:id/permission_allow_button",
+    "optional": true,
+    "timeoutMs": 5000
+  },
+  {
+    "action": "tap",
+    "name": "open the composer",
+    "using": "accessibility id",
+    "value": "compose-video",
+    "timeoutMs": 20000
+  },
+  {
+    "action": "tap",
+    "name": "pick from gallery",
+    "using": "id",
+    "value": "com.sportreels.app:id/pick_from_gallery",
+    "timeoutMs": 15000
+  },
+  {
+    "action": "tap",
+    "name": "select the pushed video",
+    "using": "-android uiautomator",
+    "value": "new UiSelector().descriptionContains(\"upload.mp4\")",
+    "timeoutMs": 20000
+  },
+  {
+    "action": "type",
+    "name": "write the caption",
+    "using": "id",
+    "value": "com.sportreels.app:id/caption_input",
+    "text": "{{caption}}",
+    "timeoutMs": 15000
+  },
+  {
+    "action": "tap",
+    "name": "submit the upload",
+    "using": "id",
+    "value": "com.sportreels.app:id/publish_button",
+    "timeoutMs": 15000
+  },
+  {
+    "action": "assertGone",
+    "name": "upload spinner clears",
+    "using": "id",
+    "value": "com.sportreels.app:id/upload_progress",
+    "timeoutMs": 120000
+  },
+  {
+    "action": "assertVisible",
+    "name": "the app confirms the upload",
+    "using": "id",
+    "value": "com.sportreels.app:id/uploaded_post_id",
+    "captureText": true,
+    "timeoutMs": 30000
+  }
+]

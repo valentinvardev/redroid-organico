@@ -1,11 +1,11 @@
 import { DelayedError, UnrecoverableError, Worker, type Job as BullJob } from 'bullmq';
-import { JobStatus } from '@prisma/client';
+import { JobStatus, Prisma, SessionState } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { getEnv } from '@/lib/env';
 import { jobLogger } from '@/lib/logging/jobLogger';
 import { isRetryable } from '@/lib/publisher/errors';
 import { getPublisher } from '@/lib/publisher/registry';
-import type { Publisher } from '@/lib/publisher/types';
+import type { OnboardingDriver, Publisher } from '@/lib/publisher/types';
 import { getRedis } from '@/lib/queue/connection';
 import {
   PUBLISH_QUEUE,
@@ -26,13 +26,53 @@ import { DeferJobError, processJob } from './processJob';
  * Both are reconciled by comparing against BullMQ and re-adding whatever Redis
  * does not already know about. Returns how many jobs were recovered.
  */
+/**
+ * An interactive job stranded by a dead worker cannot be re-queued: doing so
+ * would boot a device with nobody watching it, for an operator whose browser
+ * tab closed when the worker did. Failing it is the honest outcome, and it
+ * frees the account so a fresh link attempt can be started.
+ */
+async function failStrandedInteractiveJobs(): Promise<number> {
+  const stranded = await prisma.job.findMany({
+    where: { status: { in: [JobStatus.AWAITING_HUMAN, JobStatus.VERIFYING] } },
+    select: { id: true, accountId: true, status: true },
+  });
+
+  for (const job of stranded) {
+    await prisma.$transaction([
+      prisma.job.update({
+        where: { id: job.id },
+        data: {
+          status: JobStatus.FAILED,
+          completedAt: new Date(),
+          deviceEndpoint: Prisma.DbNull,
+          errorMessage:
+            job.status === JobStatus.VERIFYING
+              ? 'The worker restarted while verifying the session; start the link again'
+              : 'The worker restarted while waiting for the operator; start the link again',
+        },
+      }),
+      prisma.account.update({
+        where: { id: job.accountId },
+        data: { sessionState: SessionState.NONE },
+      }),
+    ]);
+
+    await jobLogger(job.id).error('Interactive job abandoned by a worker restart');
+  }
+
+  return stranded.length;
+}
+
 export async function recoverOrphans(): Promise<number> {
+  const stranded = await failStrandedInteractiveJobs();
+
   const candidates = await prisma.job.findMany({
     where: { status: { in: [JobStatus.PROCESSING, JobStatus.QUEUED, JobStatus.SCHEDULED] } },
   });
 
   if (candidates.length === 0) {
-    return 0;
+    return stranded;
   }
 
   const queue = getPublishQueue();
@@ -69,7 +109,7 @@ export async function recoverOrphans(): Promise<number> {
     recovered += 1;
   }
 
-  return recovered;
+  return recovered + stranded;
 }
 
 export async function toDeadLetter(jobId: string, reason: string): Promise<void> {
@@ -96,6 +136,8 @@ export async function toDeadLetter(jobId: string, reason: string): Promise<void>
 
 export interface CreateWorkerOptions {
   publisher?: Publisher;
+  /** Resolved lazily by default, so a stub-driver deployment never asks for one. */
+  onboardingDriver?: OnboardingDriver;
   concurrency?: number;
   /** Silences the per-job console output that is only useful in a real deployment. */
   quiet?: boolean;
@@ -103,6 +145,7 @@ export interface CreateWorkerOptions {
 
 export function createPublishWorker(options: CreateWorkerOptions = {}): Worker<PublishJobData> {
   const publisher = options.publisher ?? getPublisher();
+  const onboardingDriver = options.onboardingDriver;
   const concurrency = options.concurrency ?? getEnv().WORKER_CONCURRENCY;
   const log = options.quiet ? () => undefined : console.log.bind(console);
   const warn = options.quiet ? () => undefined : console.warn.bind(console);
@@ -111,7 +154,7 @@ export function createPublishWorker(options: CreateWorkerOptions = {}): Worker<P
     PUBLISH_QUEUE,
     async (bullJob, token) => {
       try {
-        await processJob(bullJob, publisher);
+        await processJob(bullJob, { publisher, onboardingDriver });
       } catch (error) {
         if (error instanceof DeferJobError) {
           // Rate-limited: push the job into the future without consuming an

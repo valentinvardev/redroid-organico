@@ -1,5 +1,6 @@
 import type { Platform } from '@prisma/client';
 import type { JobLogger } from '@/lib/logging/jobLogger';
+import type { HumanOutcome } from '@/lib/onboarding/signal';
 
 export interface PublisherAccount {
   id: string;
@@ -43,4 +44,51 @@ export interface PublishResult {
 export interface Publisher {
   readonly name: string;
   publish(request: PublishRequest): Promise<PublishResult>;
+}
+
+/** Everything the dashboard needs to put this device's screen in front of a person. */
+export interface DeviceEndpoint {
+  serial: string;
+  adbHost?: string;
+  adbPort?: number;
+  /** Built from DEVICE_VIEWER_URL_TEMPLATE; absent when no bridge is configured. */
+  viewerUrl?: string;
+}
+
+export interface OnboardingRequest {
+  jobId: string;
+  account: PublisherAccount;
+  log: JobLogger;
+  signal: AbortSignal;
+  /**
+   * Called once the device is up and the app is on screen. Publishing the
+   * endpoint is what flips the job to AWAITING_HUMAN and lets the UI connect —
+   * so it must happen before the wait, never after.
+   */
+  onDeviceReady(endpoint: DeviceEndpoint): Promise<void>;
+  /** Resolves when a person confirms, the job is cancelled, or the deadline passes. */
+  awaitHuman(): Promise<HumanOutcome>;
+}
+
+export type OnboardingOutcome =
+  | 'verified'
+  /** The person confirmed but the verification flow disagreed. */
+  | 'unverified'
+  /** Nobody confirmed in time — a closed tab, a distracted partner. */
+  | 'abandoned'
+  | 'cancelled';
+
+export interface OnboardingResult {
+  outcome: OnboardingOutcome;
+  details?: string;
+}
+
+/**
+ * Kept separate from `Publisher` because the shapes genuinely differ: publishing
+ * runs to completion on its own, onboarding hands the device to a person and
+ * waits. A driver may implement one, the other, or both.
+ */
+export interface OnboardingDriver {
+  readonly name: string;
+  onboard(request: OnboardingRequest): Promise<OnboardingResult>;
 }

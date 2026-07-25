@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 
 interface Job {
   id: string;
-  caption: string;
+  /** Null on interactive onboarding jobs, which carry no text. */
+  caption: string | null;
   status: string;
   attempts: number;
   maxAttempts: number;
@@ -18,7 +19,10 @@ interface Job {
   video?: { fileName: string };
 }
 
-const ACTIVE = new Set(['QUEUED', 'SCHEDULED', 'PROCESSING']);
+// AWAITING_HUMAN belongs here: the job is holding a live device, it just is not
+// the worker doing the work. Leaving it out filed onboarding runs under history
+// while they were still going.
+const ACTIVE = new Set(['QUEUED', 'SCHEDULED', 'PROCESSING', 'AWAITING_HUMAN']);
 
 export function JobQueue() {
   const [jobs, setJobs] = useState<Job[]>([]);

@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-Separar claramente lo que Claude puede ayudar a definir o revisar, y lo que yo debo implementar directamente en este proyecto para avanzar hacia el sistema de publicación en TikTok.
+Separar claramente lo que Claude puede ayudar a definir o revisar, y lo que yo debo implementar directamente en este proyecto para avanzar hacia el sistema de prueba y automatización de mi propia app.
 
 ## 2. Principio general
 

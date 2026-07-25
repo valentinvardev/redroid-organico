@@ -38,7 +38,7 @@ async function main() {
       data: {
         userId: user.id,
         name: 'Development Account',
-        platform: 'TIKTOK',
+        platform: 'SPORT_REELS',
         status: 'ACTIVE',
         // No credentials: the stub publisher does not need them, and a real
         // adapter should refuse to run without going through OAuth first.

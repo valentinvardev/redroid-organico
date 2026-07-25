@@ -59,6 +59,25 @@ const schema = z.object({
 
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
 
+  /// Which publisher adapter the worker uses. See lib/publisher/registry.ts.
+  PUBLISHER_DRIVER: z.enum(['stub', 'noop', 'tiktok', 'android']).default('stub'),
+
+  /// How often the worker sweeps for Android containers whose job is no longer
+  /// running. Only relevant with PUBLISHER_DRIVER=android. 0 disables the
+  /// periodic sweep; the one-shot sweep at startup always runs, and it is the
+  /// only thing that cleans up after a SIGKILLed worker.
+  ANDROID_REAPER_INTERVAL_MS: z.coerce.number().int().min(0).default(300_000),
+
+  /// How long an interactive onboarding job holds a live device waiting for a
+  /// person. A closed browser tab sends nothing, so this deadline is the only
+  /// thing that ends an abandoned session.
+  ONBOARDING_TIMEOUT_MS: z.coerce.number().int().min(60_000).default(20 * 60_000),
+
+  /// Where the dashboard points the screen-sharing iframe. `{serial}` is
+  /// replaced with the device serial. Empty means no viewer is wired up yet and
+  /// the job still runs — the endpoint is reported without a URL.
+  DEVICE_VIEWER_URL_TEMPLATE: z.string().default(''),
+
   /// Retry budget per job and the base delay for exponential backoff.
   /// Defaults give 15s -> 60s -> 240s across 3 attempts. Lowered in .env.test so
   /// the integration suite does not spend minutes waiting on backoff.
@@ -68,9 +87,6 @@ const schema = z.object({
   /// How long a job waits after being turned away by an account's concurrency
   /// limit. Unlike a retry, this does not consume an attempt.
   RATE_LIMIT_DEFER_MS: z.coerce.number().int().min(50).default(30_000),
-
-  /// Which publisher adapter the worker uses. See lib/publisher/registry.ts.
-  PUBLISHER_DRIVER: z.enum(['stub']).default('stub'),
 
   /// Opens /api/auth/register to anyone who can reach it. Off by default:
   /// operators are added with `npm run user:create`.

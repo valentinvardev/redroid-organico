@@ -87,6 +87,14 @@ services:
     # volume. Moving STORAGE_DRIVER to s3 removes this coupling.
     volumes:
       - media:/app/.storage
+      # Required only by PUBLISHER_DRIVER=android: the worker creates and
+      # destroys ReDroid containers through the host daemon. This grants the
+      # worker root-equivalent access to the host — acceptable for the MVP,
+      # not for a shared or untrusted environment.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - redroid
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -96,7 +104,80 @@ services:
     # being SIGKILLed into a stuck PROCESSING row.
     stop_grace_period: 60s
 
+  # ---------------------------------------------------------------------------
+  # Android automation. Started with `docker compose --profile android up`, so a
+  # deployment using the stub driver does not pay for any of it.
+  #
+  # ReDroid containers are NOT declared here: the worker creates one per job and
+  # destroys it afterwards. They join the `redroid` network below, which is why
+  # the account's redroid config should use connectVia: "container-name".
+  # ---------------------------------------------------------------------------
+
+  # One adb server shared by the worker and Appium. Without this each side would
+  # run its own, and a device connected by the worker would be invisible to
+  # Appium. `-a` makes it listen on all interfaces instead of loopback only.
+  adb-server:
+    profiles: ["android"]
+    build:
+      context: .
+      target: runtime
+    command: ["adb", "-a", "-P", "5037", "nodaemon", "server"]
+    networks:
+      - redroid
+    healthcheck:
+      test: ["CMD", "adb", "-P", "5037", "version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  appium:
+    profiles: ["android"]
+    image: appium/appium:v2.11.3
+    command: ["appium", "--address", "0.0.0.0", "--port", "4723", "--relaxed-security"]
+    environment:
+      # Point Appium's adb client at the shared server rather than its own.
+      ANDROID_ADB_SERVER_HOST: adb-server
+      ANDROID_ADB_SERVER_PORT: "5037"
+    ports:
+      - "4723:4723"
+    networks:
+      - redroid
+    depends_on:
+      adb-server:
+        condition: service_healthy
+
+  # The screen the operator actually sees, embedded in the dashboard's iframe.
+  #
+  # It talks to the same adb server as Appium and the worker, which is the whole
+  # reason that server exists: the device the worker attaches with `adb connect`
+  # has to show up in the viewer's device list without anyone connecting it
+  # twice. A viewer running its own adb server would see nothing.
+  ws-scrcpy:
+    profiles: ["android"]
+    image: scrougevnc/ws-scrcpy
+    environment:
+      ADB_SERVER_HOSTNAME: adb-server
+      ADB_SERVER_PORT: "5037"
+    ports:
+      # Reached from the operator's browser, not from another container, so this
+      # must be published on whatever host the dashboard is served from.
+      - "8000:8000"
+    networks:
+      - redroid
+    depends_on:
+      adb-server:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
   media:
+
+networks:
+  default:
+  # Named explicitly so the worker can pass it to `docker run --network` when it
+  # creates a ReDroid container. An implicit compose network name would depend
+  # on the project directory.
+  redroid:
+    name: redroid-net

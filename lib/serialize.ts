@@ -31,6 +31,8 @@ export function serializeAccount(account: Account) {
     minIntervalSeconds: account.minIntervalSeconds,
     hasCredentials: account.credentials !== null,
     tokenExpiresAt: account.tokenExpiresAt?.toISOString() ?? null,
+    sessionState: account.sessionState,
+    sessionVerifiedAt: account.sessionVerifiedAt?.toISOString() ?? null,
     createdAt: account.createdAt.toISOString(),
   };
 }
@@ -40,8 +42,18 @@ export function serializeJob(
 ) {
   return {
     id: job.id,
+    type: job.type,
+    // Needed by the dashboard to reattach a reloaded tab to the linking session
+    // that is already running for an account.
+    accountId: job.accountId,
     caption: job.caption,
     status: job.status,
+    // The dashboard needs this to know where to point the screen iframe while
+    // the job is AWAITING_HUMAN. It carries no secrets: a serial and a URL.
+    deviceEndpoint: job.deviceEndpoint ?? null,
+    awaitingSince: job.awaitingSince?.toISOString() ?? null,
+    expiresAt: job.expiresAt?.toISOString() ?? null,
+    humanConfirmedAt: job.humanConfirmedAt?.toISOString() ?? null,
     attempts: job.attempts,
     maxAttempts: job.maxAttempts,
     externalPostId: job.externalPostId,

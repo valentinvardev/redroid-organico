@@ -1,0 +1,32 @@
+[
+  {
+    "action": "tap",
+    "name": "dismiss any dialog left open by the operator",
+    "using": "id",
+    "value": "android:id/button2",
+    "optional": true,
+    "timeoutMs": 3000
+  },
+  {
+    "action": "tap",
+    "name": "open the profile tab",
+    "using": "accessibility id",
+    "value": "tab-profile",
+    "timeoutMs": 15000
+  },
+  {
+    "action": "assertGone",
+    "name": "the logged-out call to action is absent",
+    "using": "id",
+    "value": "com.sportreels.app:id/login_cta",
+    "timeoutMs": 10000
+  },
+  {
+    "action": "assertVisible",
+    "name": "the profile shows a signed-in handle",
+    "using": "id",
+    "value": "com.sportreels.app:id/profile_handle",
+    "captureText": true,
+    "timeoutMs": 15000
+  }
+]

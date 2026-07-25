@@ -10,6 +10,8 @@ datasource db {
 }
 
 enum Platform {
+  /// The app under test: a highlights/clips platform for sports photographers.
+  SPORT_REELS
   TIKTOK
 }
 
@@ -17,6 +19,23 @@ enum AccountStatus {
   ACTIVE
   INACTIVE
   NEEDS_REAUTH
+}
+
+/// Whether the device-side session for this account actually works. Kept apart
+/// from `status`, which is operator intent: an account can be ACTIVE (the
+/// operator wants it used) while its session is NONE (nobody has logged in on
+/// the device yet). Collapsing the two would make "enabled" and "usable"
+/// indistinguishable.
+enum SessionState {
+  NONE
+  ONBOARDING
+  VERIFIED
+  EXPIRED
+}
+
+enum JobType {
+  PUBLISH_VIDEO
+  INTERACTIVE_ONBOARDING
 }
 
 enum VideoStatus {
@@ -30,6 +49,15 @@ enum JobStatus {
   QUEUED
   SCHEDULED
   PROCESSING
+  /// The worker is holding a live device and waiting for a person to finish
+  /// something on it. Distinct from PROCESSING because the dashboard has to
+  /// know when to offer the screen, and because nothing is wrong with a job
+  /// that sits here for ten minutes.
+  AWAITING_HUMAN
+  /// The person said they were done and the worker is checking whether the app
+  /// agrees. Explicit rather than inferred from `humanConfirmedAt`: a job that
+  /// dies here has to be distinguishable from one that died waiting.
+  VERIFYING
   COMPLETED
   FAILED
   CANCELLED
@@ -84,7 +112,7 @@ model Account {
   id       String        @id @default(cuid())
   userId   String
   name     String
-  platform Platform      @default(TIKTOK)
+  platform Platform      @default(SPORT_REELS)
   status   AccountStatus @default(ACTIVE)
 
   /// Platform-side identifier returned by the provider after OAuth.
@@ -95,6 +123,11 @@ model Account {
   credentials Bytes?
 
   tokenExpiresAt DateTime?
+
+  /// Set by an INTERACTIVE_ONBOARDING job once a person has logged in on the
+  /// device and the verification flow confirmed it.
+  sessionState      SessionState @default(NONE)
+  sessionVerifiedAt DateTime?
 
   /// Per-account throttling, enforced by the worker's rate limiter (M4).
   maxConcurrent      Int @default(1)
@@ -148,11 +181,29 @@ model Job {
   id        String @id @default(cuid())
   userId    String
   accountId String
-  videoId   String
 
-  caption String @db.Text
+  type JobType @default(PUBLISH_VIDEO)
+
+  /// Null for INTERACTIVE_ONBOARDING, which carries no media and no text.
+  /// The publish path re-checks both rather than trusting the type alone.
+  videoId String?
+  caption String? @db.Text
 
   status JobStatus @default(QUEUED)
+
+  /// How to reach this job's device while it is AWAITING_HUMAN: serial, adb
+  /// server, and a ready-made viewer URL for the dashboard to embed. Written by
+  /// the worker, read by the UI — it is the only way the browser learns which
+  /// of N ephemeral containers to show.
+  deviceEndpoint Json?
+
+  awaitingSince DateTime?
+  /// When an unattended interactive job gives up. A partner who closes the tab
+  /// must not leave an Android container running until someone notices.
+  expiresAt DateTime?
+  /// Stamped by the API when the person says they are done. The worker treats
+  /// this as the durable form of the wake-up signal.
+  humanConfirmedAt DateTime?
 
   /// Set by the API before enqueueing. The unique constraint is what makes a
   /// retry — from BullMQ or from a double-clicked button — impossible to turn
@@ -179,13 +230,15 @@ model Job {
 
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   account Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  video   Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  video   Video?   @relation(fields: [videoId], references: [id], onDelete: Cascade)
   logs    JobLog[]
 
   @@index([status])
   @@index([accountId, status])
   @@index([userId, createdAt])
   @@index([scheduledAt])
+  /// Drives the sweep that expires abandoned interactive jobs.
+  @@index([status, expiresAt])
   @@map("jobs")
 }
 

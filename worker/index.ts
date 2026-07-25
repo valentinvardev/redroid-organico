@@ -4,8 +4,33 @@ import { getEnv } from '@/lib/env';
 import { closeRedis } from '@/lib/queue/connection';
 import { DEAD_LETTER_QUEUE, PUBLISH_QUEUE } from '@/lib/queue/publishQueue';
 import { createPublishWorker, recoverOrphans } from '@/lib/worker/createWorker';
+import { reapAndroidContainers, startAndroidReaper, type ReaperHandle } from '@/lib/android/reaper';
 
 const env = getEnv();
+
+/**
+ * Android containers outlive the process that created them, so a worker that
+ * was SIGKILLed leaves gigabyte-sized Android instances running with nothing
+ * left to shut them down. The sweep at startup is the only mechanism that
+ * recovers from that; the interval catches jobs that die later.
+ */
+async function startContainerReaping(): Promise<ReaperHandle | undefined> {
+  if (env.PUBLISHER_DRIVER !== 'android') {
+    return undefined;
+  }
+
+  const initial = await reapAndroidContainers({ graceMs: 0 });
+
+  if (initial.inspected > 0) {
+    console.log(`[worker] startup sweep: ${initial.removed.length}/${initial.inspected} container(s) reaped`);
+  }
+
+  if (env.ANDROID_REAPER_INTERVAL_MS === 0) {
+    return undefined;
+  }
+
+  return startAndroidReaper(env.ANDROID_REAPER_INTERVAL_MS);
+}
 
 async function main(): Promise<void> {
   const recovered = await recoverOrphans();
@@ -13,6 +38,11 @@ async function main(): Promise<void> {
   if (recovered > 0) {
     console.log(`[worker] recovered ${recovered} orphaned job(s)`);
   }
+
+  // Deliberately after recoverOrphans(): that call moves jobs stranded by a
+  // dead worker out of PROCESSING, which is exactly what makes their leftover
+  // containers recognisable as garbage here.
+  const reaper = await startContainerReaping();
 
   const worker = createPublishWorker();
 
@@ -30,6 +60,8 @@ async function main(): Promise<void> {
 
     shuttingDown = true;
     console.log(`[worker] ${signal} received, finishing active jobs...`);
+
+    reaper?.stop();
 
     // `false` lets in-flight jobs run to completion instead of being killed and
     // re-delivered, which for a publish job could mean a duplicate post.

@@ -496,3 +496,261 @@ code {
   font-size: 0.76rem;
   color: var(--muted);
 }
+
+/* --- Accounts --------------------------------------------------------------- */
+
+.accounts {
+  margin-bottom: 24px;
+}
+
+.account-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.6fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.account-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-name {
+  font-weight: 600;
+}
+
+.account-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.account-session {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pill {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.pill-ok { color: var(--ok); }
+.pill-warn { color: var(--warn); }
+.pill-bad { color: var(--danger); }
+
+/* --- Onboarding dialog ------------------------------------------------------ */
+
+.onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(4px);
+}
+
+.onboarding-panel {
+  width: min(920px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 32px 80px rgba(2, 6, 23, 0.6);
+  overflow: hidden;
+}
+
+.onboarding-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.onboarding-header h2 {
+  margin: 2px 0 0;
+  font-size: 20px;
+}
+
+.onboarding-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.onboarding-body {
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.onboarding-centred {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  min-height: 320px;
+}
+
+.onboarding-lead {
+  margin: 0;
+  font-size: 16px;
+  max-width: 52ch;
+  line-height: 1.5;
+}
+
+.onboarding-live {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.onboarding-screen {
+  width: 100%;
+  height: min(60vh, 620px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #000;
+  /* The viewer is a separate document, so this background only shows before it
+     paints. When the bridge is unreachable the browser renders its own error
+     page inside — color-scheme keeps that dark instead of flashing a
+     full-height white rectangle at the operator. */
+  color-scheme: dark;
+}
+
+.onboarding-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  text-align: center;
+  min-height: 240px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.onboarding-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.onboarding-badge {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  font-size: 26px;
+  font-weight: 700;
+  border: 2px solid currentColor;
+}
+
+.onboarding-badge-ok { color: var(--ok); }
+.onboarding-badge-bad { color: var(--danger); }
+
+.onboarding-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: onboarding-spin 900ms linear infinite;
+}
+
+@keyframes onboarding-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Countdown -------------------------------------------------------------- */
+
+.countdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.countdown-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+
+.countdown-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 1s linear;
+}
+
+.countdown-urgent .countdown-fill {
+  background: var(--danger);
+}
+
+.countdown-label {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.countdown-urgent .countdown-label {
+  color: var(--danger);
+}
+
+button.big {
+  font-size: 16px;
+  padding: 12px 28px;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+/* Motion is decoration here; the countdown text still carries the information. */
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-spinner { animation: none; }
+  .countdown-fill { transition: none; }
+}
+
+@media (max-width: 720px) {
+  .account-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .onboarding-screen {
+    height: 55vh;
+  }
+}

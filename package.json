@@ -20,6 +20,7 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "user:create": "tsx scripts/createUser.ts",
+    "account:add": "tsx scripts/addAccount.ts",
     "keys:rotate": "tsx scripts/rotateCredentials.ts"
   },
   "prisma": {

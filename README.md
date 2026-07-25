@@ -7,12 +7,14 @@ vivo.
 ## Estado
 
 Implementado: las ocho fases M0–M7 del roadmap, autenticación con sesiones,
-gestión de usuarios, rotación de claves de cifrado, y 79 tests (70 de integración
-contra Postgres y Redis reales, 9 sin infraestructura).
+gestión de usuarios, rotación de claves de cifrado, y 110 tests (101 de
+integración contra Postgres y Redis reales, 9 sin infraestructura).
 
-**El sistema todavía no publica en ninguna plataforma.** La capa que entrega el
-post es un adaptador enchufable y el único registrado es `stub`, que ejercita todo
-el pipeline sin contactar nada externo. Ver [Publicación real](#publicación-real).
+**El driver `android` todavía no corrió contra un dispositivo real.** Su lógica
+está cubierta por tests que hablan HTTP real contra un servidor Appium simulado
+—incluida la garantía de que un flujo que no encuentra sus elementos falla en vez
+de reportar éxito— pero nunca manejó un emulador ni un contenedor ReDroid de
+verdad. Ver [Publicación real](#publicación-real).
 
 ### Qué está verificado y qué no
 
@@ -182,13 +184,161 @@ no filtra un token.
 Todo lo de arriba es agnóstico a cómo llega el post a la plataforma. El contrato
 está en `lib/publisher/types.ts` y el registro en `lib/publisher/registry.ts`.
 
-El adaptador previsto es la **API oficial de publicación de contenido de TikTok**,
+El adaptador previsto es la **API oficial de publicación de contenido de la app objetivo**,
 con tokens OAuth por cuenta guardados en `Account.credentials`. Implementar
 `Publisher`, registrarlo y ampliar `PUBLISHER_DRIVER` en `lib/env.ts` es todo lo
 que hace falta; nada aguas arriba cambia.
 
-`PUBLISHER_DRIVER` solo acepta `stub` hoy, a propósito: nada puede correr en
-producción creyendo que publicó algo cuando en realidad no contactó a nadie.
+`PUBLISHER_DRIVER` acepta `stub`, `noop`, `tiktok` y `android`. `stub` ejerce el
+flujo completo, validando los medios en disco antes de devolver un id sintético.
+`noop` es útil para demos y pruebas secas porque acepta la solicitud sin
+necesitar un archivo real en disco. `tiktok` usa credenciales OAuth cifradas en
+`Account.credentials`. `android` es el adaptador central del proyecto: maneja la
+app bajo prueba en un dispositivo Android real o containerizado, vía ADB +
+Appium.
+
+### El driver `android`
+
+Cada cuenta declara **qué app manejar y con qué pasos**, en
+`Account.credentials`. No hay defaults de plataforma: una cuenta sin
+`packageName` o sin `flow` es rechazada al crearse, no al ejecutarse.
+
+El flujo es una lista de pasos declarativos (`lib/android/uiFlow.ts`):
+
+| Acción | Qué hace |
+| --- | --- |
+| `tap` | Espera el elemento y lo toca |
+| `type` | Espera, limpia y escribe (soporta `{{caption}}`) |
+| `assertVisible` | Exige que el elemento aparezca; con `captureText` su texto pasa a ser el `externalPostId` |
+| `assertGone` | Exige que el elemento desaparezca — un spinner que termina |
+| `wait` | Pausa fija |
+
+Dos reglas hacen que un run no pueda mentir:
+
+1. **Un flujo sin ninguna aserción es rechazado.** Un test que solo toca botones
+   siempre puede reportar éxito, que es peor que no tener test.
+2. **Un paso que no encuentra su elemento falla el job.** La tolerancia es
+   opt-in con `"optional": true`, pensada para diálogos condicionales
+   (permisos, "calificanos"), y cada salto queda registrado en los logs del job.
+
+El `externalPostId` sale del elemento que confirma la subida, o es
+`android_<jobId>` — nunca un UUID al azar, porque un id inventado antes de tocar
+la UI es indistinguible de una publicación real.
+
+Cuando un paso falla se guardan **screenshot y jerarquía UI** en el storage
+(`artifacts/<jobId>/…`, local o S3) y sus claves quedan en el log del job.
+
+Clasificación de errores, que es lo que decide si BullMQ reintenta:
+
+| Situación | Código | ¿Reintenta? |
+| --- | --- | --- |
+| Dispositivo sin bootear | `device_not_ready` | Sí |
+| Push incompleto | `media_push_truncated` | Sí |
+| Appium inalcanzable | `appium_unreachable` | Sí |
+| Selector que nunca aparece | `ui_step_not_found` | **No** |
+| App caída tras el launch | `app_not_running` | **No** |
+| Credenciales/flujo inválidos | `invalid_android_credentials` | **No** |
+
+Reintentar un selector equivocado tres veces gasta cinco minutos, informa lo
+mismo, y esconde un defecto real de la app detrás de "intento 3/3".
+
+### Dónde corre el Android
+
+El driver no sabe de dónde sale el dispositivo. Eso lo decide un *provider*
+(`lib/android/deviceProvider.ts`), elegido según la cuenta:
+
+- **`attached`** — el dispositivo ya existe y sobrevive al job: un AVD local, un
+  teléfono por USB, un contenedor que administra otro. Es el default. Liberar no
+  hace nada: destruir un dispositivo que este sistema no creó sería una sorpresa,
+  no una limpieza.
+- **`redroid`** — se activa poniendo un bloque `redroid` en las credenciales de
+  la cuenta. Crea un contenedor Android descartable por job y lo destruye al
+  terminar.
+
+#### Ciclo de vida del contenedor efímero
+
+```
+acquire()
+  ├─ rechaza si la cuenta ya tiene un contenedor vivo   (dos jobs = un volumen = corrupción)
+  ├─ docker volume create redroid-session-<accountId>   (sesión persistente por cuenta)
+  ├─ docker run --privileged --label ...                (etiquetado para el reaper)
+  ├─ espera el puerto ADB publicado                     (Docker elige uno libre)
+  ├─ adb connect  ──► reintenta hasta startTimeoutSeconds
+  ├─ espera sys.boot_completed=1 Y init.svc.bootanim=stopped
+  └─ verifica que el paquete esté instalado
+release()
+  ├─ adb disconnect   (si no, el server acumula entradas "offline")
+  └─ docker rm -f
+```
+
+Las tres compuertas de readiness importan porque cada una pasa mientras la
+siguiente falla. ReDroid marca `sys.boot_completed` mientras la animación de
+arranque sigue corriendo y el package manager todavía se está acomodando:
+entregarle ese dispositivo a Appium produce runs que fallan con "elemento no
+encontrado" sin que el flujo tenga nada malo.
+
+El volumen de sesión es **por cuenta**, montado en `/data`, que es donde Android
+guarda todo lo que debe sobrevivir entre runs: el login, las bases de la app, las
+preferencias. Dos cuentas nunca se ven el estado.
+
+#### Que no queden zombies
+
+Un contenedor Android sobrevive al proceso que lo creó y se come un giga de RAM,
+así que hay tres mecanismos independientes — cualquiera de ellos se puede saltear:
+
+1. **`release()` en el `finally` del publisher.** El camino normal. Corre aunque
+   Appium explote en la mitad del flujo, y aunque `acquire()` falle a mitad de
+   camino, porque en ese caso el provider se limpia solo antes de propagar.
+2. **Timeout en cada llamada a `docker`.** Un daemon trabado no puede convertir
+   "destruí el contenedor" en una promesa que nunca resuelve.
+3. **El reaper** (`lib/android/reaper.ts`). Lo único que sirve cuando el worker
+   recibe SIGKILL y ningún `finally` llega a correr.
+
+El reaper decide contra **la base de datos**, no contra estado en memoria: un
+contenedor cuya etiqueta `jobId` apunta a un job que no está `PROCESSING` es
+basura, sin importar qué worker lo creó. Eso lo hace correcto con varias réplicas.
+Compone con `recoverOrphans()`, que corre antes en el arranque y saca de
+`PROCESSING` los jobs que dejó colgados un worker muerto — justo lo que vuelve
+reconocibles a sus contenedores.
+
+Ante la duda, no mata: un contenedor más joven que el período de gracia se deja
+en paz, y si no puede consultar el job lo reporta y sigue. Filtrar de más es peor
+que filtrar de menos cuando la alternativa es matar un run sano.
+
+#### Topología en compose
+
+```bash
+docker compose --profile android up --build
+```
+
+Levanta, además del stack normal, un **servidor adb compartido** y **Appium**.
+Lo compartido no es un detalle: si cada lado corriera su propio adb, un
+dispositivo conectado por el worker sería invisible para Appium. Appium apunta al
+mismo servidor vía `ANDROID_ADB_SERVER_HOST`.
+
+Los contenedores ReDroid **no** están declarados en el compose: los crea el
+worker por job, en la red `redroid-net`. Por eso la cuenta debería usar
+`"connectVia": "container-name"` en ese despliegue.
+
+El worker monta `/var/run/docker.sock`, lo que equivale a root en el host.
+Aceptable para el MVP, no para un entorno compartido.
+
+Ejemplo de bloque `redroid` en las credenciales de la cuenta:
+
+```json
+{
+  "image": "sportreels/redroid:11-golden",
+  "connectVia": "container-name",
+  "network": "redroid-net",
+  "memoryLimit": "4g",
+  "gpuMode": "guest",
+  "startTimeoutSeconds": 180
+}
+```
+
+La imagen es tuya: ReDroid con `com.sportreels.app` ya instalado. Tiene que
+coincidir con la arquitectura del host — una imagen arm64 en un host x86 no
+arranca, o va a paso de qemu.
 
 ## Autenticación
 
@@ -223,6 +373,41 @@ npm run user:create -- alice@example.com --name "Alice"
 npm run user:create -- alice@example.com --password 'elegida'
 npm run user:create -- alice@example.com --reset      # nueva contraseña
 ```
+
+### Agregar cuentas de app
+
+El CLI de cuentas ahora soporta dos modos:
+
+- `--driver api` para credenciales OAuth/API
+- `--driver android` para credenciales ADB/Appium
+
+Ejemplos:
+
+```bash
+npm run account:add -- --user <userId> --name "API Credentials" --driver api \
+  --access-token "<token>" --refresh-token "<refresh-token>" --expires-at "2026-12-31T00:00:00Z"
+```
+
+```bash
+npm run account:add -- --user <userId> --name "App bajo prueba" --driver android \
+  --appium-url "http://127.0.0.1:4723" \
+  --package-name "com.example.app" \
+  --flow examples/flows/upload-video.json \
+  --device-serial "emulator-5554" \
+  --remote-video-path "/sdcard/DCIM/upload.mp4"
+```
+
+`--flow` es obligatorio y se valida contra el mismo esquema que usa el worker,
+así que un flujo mal formado — sin aserciones, con una estrategia de locator
+inexistente — se rechaza al crear la cuenta. `--activity-name` es opcional: sin
+él, Android resuelve la activity de lanzamiento, lo que sobrevive a que la app
+renombre su entry point entre builds.
+
+`examples/flows/upload-video.json` es una plantilla para copiar y adaptar a los
+`resource-id` de tu app.
+
+La cuenta se guarda en `Account.credentials` cifrada y el worker la descifra solo
+cuando ejecuta el job.
 
 Sin `--password` genera una fuerte y la imprime una sola vez. Un `--reset`
 cierra todas las sesiones de ese usuario.
@@ -263,7 +448,7 @@ reintento con la clave correcta.
 ```bash
 npm run smoke              # 9 tests: cripto, validación, errores — sin infra
 npm run test:setup         # crea redroid_test y le aplica las migraciones
-npm run test:integration   # 70 tests contra Postgres y Redis reales
+npm run test:integration   # 101 tests contra Postgres y Redis reales
 npm test                   # ambos
 ```
 

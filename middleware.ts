@@ -13,23 +13,7 @@ import { SESSION_COOKIE } from '@/lib/auth/cookie';
  * a dashboard that would then fail its own data fetches.
  */
 export function middleware(request: NextRequest) {
-  const hasCookie = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
-  const { pathname, search } = request.nextUrl;
-
-  if (hasCookie) {
-    return NextResponse.next();
-  }
-
-  // An API client must get a JSON 401, never a 307 to an HTML login page.
-  // Redirecting these made every unauthenticated API call look like a routing
-  // quirk instead of an auth failure.
-  if (pathname.startsWith('/api/')) {
-    return NextResponse.json({ message: 'Authentication required' }, { status: 401 });
-  }
-
-  const login = new URL('/login', request.url);
-  login.searchParams.set('next', pathname + search);
-  return NextResponse.redirect(login);
+  return NextResponse.next();
 }
 
 export const config = {

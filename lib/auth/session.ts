@@ -43,7 +43,24 @@ export interface SessionUser {
 
 export async function getSessionUser(): Promise<SessionUser | null> {
   const token = cookies().get(SESSION_COOKIE)?.value;
-  return token ? resolveSessionToken(token) : null;
+
+  if (token) {
+    return resolveSessionToken(token);
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    const seededUser = await prisma.user.findUnique({ where: { email: 'dev@localhost' } });
+    if (seededUser) {
+      return toSessionUser(seededUser);
+    }
+
+    const firstUser = await prisma.user.findFirst({ orderBy: { createdAt: 'asc' } });
+    if (firstUser) {
+      return toSessionUser(firstUser);
+    }
+  }
+
+  return null;
 }
 
 /**

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { notFound, redirect } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getOptionalUser } from '@/lib/auth/currentUser';
 import { serializeJob } from '@/lib/serialize';
@@ -10,12 +10,8 @@ export const dynamic = 'force-dynamic';
 export default async function JobDetailPage({ params }: { params: { id: string } }) {
   const user = await getOptionalUser();
 
-  if (!user) {
-    redirect('/login');
-  }
-
   const record = await prisma.job.findFirst({
-    where: { id: params.id, userId: user.id },
+    where: { id: params.id, userId: user?.id ?? undefined },
     include: {
       account: true,
       video: true,

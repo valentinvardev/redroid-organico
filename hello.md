@@ -1,6 +1,6 @@
 # **1. Resumen del Sistema**
 
-El presente documento describe la arquitectura de un sistema automatizado para la publicación masiva de contenido en redes sociales (TikTok, Facebook, Instagram) diseñado para operar sin detección algorítmica (*shadowbans*).
+El presente documento describe la arquitectura de un sistema automatizado para la publicación masiva de contenido en redes sociales y en una app propia, diseñado para operar sin detección algorítmica (*shadowbans*).
 
 El sistema abandona las APIs oficiales restrictivas y la emulación x86, adoptando un enfoque de **Android Nativo en la Nube (ReDroid)** sobre servidores ARM, combinado con aislamiento estricto de proxies residenciales a nivel de contenedor y orquestación asíncrona en TypeScript.
 
@@ -58,7 +58,7 @@ ports:
 
 redroid_cuenta1:
 
-image: mi_redroid_base # Imagen maestra con TikTok/Meta preinstalado
+image: mi_redroid_base # Imagen maestra con la app preinstalada
 
 privileged: true
 

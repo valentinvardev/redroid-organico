@@ -1,15 +1,15 @@
-# Plan de Desarrollo — MVP TikTok con ReDroid
+# Plan de Desarrollo — MVP de prueba de app con ReDroid
 
 ## 1. Objetivo
 
-Construir un MVP funcional para publicar videos en TikTok de forma automatizada usando un flujo asíncrono, con detección de estado, persistencia de sesión y ejecución aislada por cuenta.
+Construir un MVP funcional para testear mi propia app de forma automatizada usando un flujo asíncrono, con detección de estado, persistencia de sesión y ejecución aislada por cuenta.
 
 ## 2. Alcance inicial del MVP
 
 ### Funcionalidades incluidas
 - Subida de un video desde la web
 - Ingreso de caption
-- Selección de una cuenta TikTok
+- Selección de una cuenta de la app
 - Encolado del trabajo para publicación
 - Ejecución en segundo plano mediante worker
 - Seguimiento del estado del trabajo
@@ -69,7 +69,7 @@ Construir un MVP funcional para publicar videos en TikTok de forma automatizada 
 - Flujo mínimo:
   1. Iniciar entorno Android
   2. Transferir video al almacenamiento interno
-  3. Abrir TikTok
+  3. Abrir la app de prueba
   4. Iniciar carga de video
   5. Escribir caption
   6. Publicar
@@ -81,7 +81,7 @@ Construir un MVP funcional para publicar videos en TikTok de forma automatizada 
 ### Tabla: accounts
 - id
 - name
-- platform (siempre tikTok por ahora)
+- platform
 - status
 - sessionPath
 - proxyId
@@ -141,8 +141,8 @@ Construir un MVP funcional para publicar videos en TikTok de forma automatizada 
 3. Inicia el entorno Android o contenedor asociado.
 4. Transfiere el video al dispositivo.
 
-### Fase 3: Automatización TikTok
-1. Abre la app TikTok.
+### Fase 3: Automatización mi app
+1. Abre la app .
 2. Navega al flujo de subida.
 3. Selecciona el video transferido.
 4. Inserta el caption.
@@ -156,14 +156,14 @@ Construir un MVP funcional para publicar videos en TikTok de forma automatizada 
 ## 6. Primer milestone
 
 ### Objetivo mínimo viable
-- Una sola cuenta TikTok
+- Una sola cuenta de mi app
 - Un solo video por job
 - Un solo worker activo
 - Un flujo de publicación funcional end-to-end
 
 ## 7. Riesgos iniciales
 
-- Cambios en la UI de TikTok
+- Cambios en la UI de mi app
 - Dificultad para localizar selectores estables
 - Fallos de sesión o login
 - Problemas de arranque del ambiente Android
@@ -188,7 +188,7 @@ Construir un MVP funcional para publicar videos en TikTok de forma automatizada 
 - Preparar contenedor Android
 - Conectar por ADB
 - Transferir video al dispositivo
-- Validar apertura de TikTok
+- Validar apertura de la app
 - Integrar la selección del proxy asociado a la cuenta
 
 ### Fase 4 — Automatización
@@ -205,4 +205,4 @@ Construir un MVP funcional para publicar videos en TikTok de forma automatizada 
 
 ## 9. Recomendación inicial
 
-Empezar por un flujo simple y robusto, no por una arquitectura demasiado compleja. El primer objetivo debe ser demostrar que un video puede publicarse correctamente en TikTok desde un job encolado y ejecutado por un worker.
+Empezar por un flujo simple y robusto, no por una arquitectura demasiado compleja. El primer objetivo debe ser demostrar que un video puede publicarse correctamente en mi propia app desde un job encolado y ejecutado por un worker.

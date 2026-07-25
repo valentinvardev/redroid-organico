@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
-import { Prisma, type Job, JobStatus } from '@prisma/client';
+import { Prisma, type Job, JobStatus, JobType } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { jobLogger } from '@/lib/logging/jobLogger';
+import { signalHumanDone } from '@/lib/onboarding/signal';
 import { getPublishQueue, type PublishJobData } from '@/lib/queue/publishQueue';
 
 export class JobConflictError extends Error {
@@ -165,6 +166,133 @@ async function enqueue(job: Job): Promise<void> {
   );
 }
 
+export interface CreateOnboardingJobInput {
+  userId: string;
+  accountId: string;
+  idempotencyKey?: string;
+}
+
+/**
+ * Queues an interactive onboarding run: the worker will bring up a device, put
+ * the app on screen, and wait for a person to log in.
+ *
+ * `maxAttempts: 1` on purpose. A retry would silently bring up a second device
+ * that nobody is watching, and the operator whose tab timed out has no way to
+ * know a new one is waiting for them.
+ */
+export async function createOnboardingJob(input: CreateOnboardingJobInput): Promise<CreatePublishJobResult> {
+  const idempotencyKey = input.idempotencyKey?.trim() || randomUUID();
+
+  const existingByKey = await prisma.job.findUnique({ where: { idempotencyKey } });
+
+  if (existingByKey) {
+    return { job: existingByKey, created: false };
+  }
+
+  const account = await prisma.account.findFirst({
+    where: { id: input.accountId, userId: input.userId },
+  });
+
+  if (!account) {
+    throw new JobValidationError(`Account ${input.accountId} not found`);
+  }
+
+  if (account.status === 'INACTIVE') {
+    throw new JobValidationError(`Account ${account.name} is inactive`);
+  }
+
+  // Two onboarding runs for one account would fight over the session volume,
+  // and the second operator would be logging into a device that is about to be
+  // destroyed.
+  const inFlight = await prisma.job.findFirst({
+    where: {
+      accountId: account.id,
+      status: { in: [...ACTIVE_STATUSES, JobStatus.AWAITING_HUMAN, JobStatus.VERIFYING] },
+      idempotencyKey: { not: idempotencyKey },
+    },
+  });
+
+  if (inFlight) {
+    throw new JobConflictError(
+      `Account ${account.name} already has a job ${inFlight.status.toLowerCase()}`,
+      inFlight.id,
+    );
+  }
+
+  let job: Job;
+
+  try {
+    job = await prisma.job.create({
+      data: {
+        userId: input.userId,
+        accountId: account.id,
+        type: JobType.INTERACTIVE_ONBOARDING,
+        videoId: null,
+        caption: null,
+        idempotencyKey,
+        maxAttempts: 1,
+        status: JobStatus.QUEUED,
+      },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const winner = await prisma.job.findUnique({ where: { idempotencyKey } });
+
+      if (winner) {
+        return { job: winner, created: false };
+      }
+    }
+
+    throw error;
+  }
+
+  await enqueue(job);
+
+  return { job, created: true };
+}
+
+/**
+ * The person says they finished logging in. Writing the timestamp is what makes
+ * this durable: the Redis nudge that follows only decides whether the worker
+ * notices now or on its next poll a second later.
+ */
+export async function confirmOnboarding(userId: string, jobId: string): Promise<Job> {
+  const job = await prisma.job.findFirst({ where: { id: jobId, userId } });
+
+  if (!job) {
+    throw new JobValidationError(`Job ${jobId} not found`);
+  }
+
+  if (job.type !== JobType.INTERACTIVE_ONBOARDING) {
+    throw new JobValidationError('This job is not an interactive onboarding run');
+  }
+
+  if (job.status !== JobStatus.AWAITING_HUMAN) {
+    throw new JobValidationError(
+      `Job is ${job.status.toLowerCase()}; only a job awaiting a person can be confirmed`,
+    );
+  }
+
+  if (job.humanConfirmedAt) {
+    return job;
+  }
+
+  const updated = await prisma.job.update({
+    where: { id: job.id },
+    data: { humanConfirmedAt: new Date() },
+  });
+
+  await jobLogger(job.id).info('Operator reported the login as finished');
+
+  // Best effort. The worker polls the column above, so a Redis outage delays
+  // the teardown by a second rather than stranding a device.
+  await signalHumanDone(job.id).catch((error) => {
+    console.warn(`[jobs] could not push the onboarding signal for ${job.id}`, error);
+  });
+
+  return updated;
+}
+
 export async function cancelJob(userId: string, jobId: string): Promise<Job> {
   const job = await prisma.job.findFirst({ where: { id: jobId, userId } });
 
@@ -172,7 +300,10 @@ export async function cancelJob(userId: string, jobId: string): Promise<Job> {
     throw new JobValidationError(`Job ${jobId} not found`);
   }
 
-  if (!ACTIVE_STATUSES.includes(job.status)) {
+  // A job holding a device for a person is cancellable too — that is exactly
+  // the "operator closed the tab" case, and the worker's wait notices the
+  // status change on its next cycle and tears the device down.
+  if (!ACTIVE_STATUSES.includes(job.status) && job.status !== JobStatus.AWAITING_HUMAN) {
     throw new JobValidationError(`Job is ${job.status.toLowerCase()} and cannot be cancelled`);
   }
 

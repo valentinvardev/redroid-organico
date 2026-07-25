@@ -5,10 +5,26 @@ FROM node:20-bookworm-slim AS base
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
 
-# openssl is required by Prisma's query engine; ffmpeg by the media pipeline.
+# openssl is required by Prisma's query engine; ffmpeg by the media pipeline;
+# adb by the Android driver, which also runs the shared adb server container.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg \
+ && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg curl adb \
  && rm -rf /var/lib/apt/lists/*
+
+# The Docker CLI only — the worker talks to the host's daemon over the mounted
+# socket and never runs one of its own. Only the client binary is extracted, so
+# this adds a few MB rather than the whole engine.
+ARG TARGETARCH
+ARG DOCKER_CLI_VERSION=27.3.1
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) docker_arch=x86_64 ;; \
+      arm64) docker_arch=aarch64 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_CLI_VERSION}.tgz" \
+      | tar -xz -C /usr/local/bin --strip-components=1 docker/docker; \
+    docker --version
 
 
 FROM base AS deps
