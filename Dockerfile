@@ -29,6 +29,10 @@ RUN set -eux; \
 
 FROM base AS deps
 COPY package.json package-lock.json ./
+# The schema comes along because `npm ci` now runs `prisma generate` as a
+# postinstall hook; without it here the install fails inside the image while
+# working fine on a developer's machine.
+COPY prisma ./prisma
 RUN npm ci
 
 

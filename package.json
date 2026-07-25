@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "//postinstall": "A fresh clone otherwise fails with \"Cannot find module '.prisma/client/default'\" the first time anything imports lib/db.ts, which npm ci gives no hint about.",
+    "postinstall": "prisma generate",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
