@@ -8,6 +8,9 @@ import { reapAndroidContainers, startAndroidReaper, type ReaperHandle } from '@/
 
 const env = getEnv();
 
+/** How long a graceful shutdown waits for in-flight jobs before forcing it. */
+const SHUTDOWN_GRACE_MS = 30_000;
+
 /**
  * Android containers outlive the process that created them, so a worker that
  * was SIGKILLed leaves gigabyte-sized Android instances running with nothing
@@ -65,7 +68,24 @@ async function main(): Promise<void> {
 
     // `false` lets in-flight jobs run to completion instead of being killed and
     // re-delivered, which for a publish job could mean a duplicate post.
-    await worker.close(false);
+    //
+    // Bounded, though: an interactive job parked on `awaitHuman` holds the
+    // worker for its full twenty-minute deadline, and a wedged one holds it
+    // forever. Without this the process stops consuming the moment SIGTERM
+    // arrives and then never exits — leaving a worker that looks alive, refuses
+    // work, and survives every subsequent `pkill`.
+    const forced = await Promise.race([
+      worker.close(false).then(() => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(true), SHUTDOWN_GRACE_MS)),
+    ]);
+
+    if (forced) {
+      console.warn(
+        `[worker] jobs still in flight after ${SHUTDOWN_GRACE_MS}ms, closing anyway; ` +
+          'they are reclaimed by recoverOrphans() on the next boot',
+      );
+      await worker.close(true).catch(() => undefined);
+    }
     await prisma.$disconnect();
     await closeRedis();
 
