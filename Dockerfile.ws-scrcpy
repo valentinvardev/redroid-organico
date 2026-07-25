@@ -24,6 +24,12 @@ RUN git clone --depth 1 --branch "${WS_SCRCPY_REF}" https://github.com/NetrisTV/
 RUN npm install --no-audit --no-fund
 RUN npm run dist
 
+# Production dependencies are installed *here*, where the toolchain lives.
+# node-pty is a native module: installing it in the runtime stage means putting
+# python3, make and g++ in the final image just to compile something the build
+# stage could have compiled and handed over.
+RUN cd dist && npm install --no-audit --no-fund --omit=dev
+
 
 FROM node:20-bookworm-slim AS runtime
 
@@ -35,8 +41,6 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=build /src/dist ./
-
-RUN npm install --no-audit --no-fund --omit=dev
 
 EXPOSE 8000
 CMD ["node", "index.js"]
