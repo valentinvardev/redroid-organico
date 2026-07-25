@@ -10,7 +10,7 @@ import {
   OWNER_VALUE,
   type DockerClient,
 } from './docker';
-import { assertPackageInstalled, type AcquireContext, type AcquiredDevice, type DeviceProvider } from './deviceProvider';
+import { ensurePackageInstalled, type AcquireContext, type AcquiredDevice, type DeviceProvider } from './deviceProvider';
 
 export const redroidConfigSchema = z.object({
   /**
@@ -205,7 +205,7 @@ export class EphemeralRedroidProvider implements DeviceProvider {
     try {
       serial = await this.resolveSerial(name, context);
       const device = await this.waitUntilUsable(serial, name, context);
-      await assertPackageInstalled(device, context);
+      await ensurePackageInstalled(device, context);
 
       await context.log.info('Android container ready', { container: name, serial });
 

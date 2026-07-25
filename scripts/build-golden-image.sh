@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
 #
+# DOES NOT WORK FOR USER APPS. Kept only for the system-app case.
+#
+# Verified on Ubuntu 26.04 / Graviton: a user app installs and verifies inside
+# the build container, and the committed image comes out without it. ReDroid
+# mounts /data at runtime and `docker commit` captures only the container's
+# writable layer, so everything under /data — which is where user apps live —
+# is silently dropped. The build reports success because every step it performs
+# genuinely succeeded.
+#
+# Install at runtime instead: set `apkPath` in the account credentials and the
+# provider installs the APK when the device does not have the package. On a
+# persistent session volume that cost is paid once per account.
+#
+# This script remains useful only if the app is turned into a system app under
+# /system or /product, which does live in the image layers.
+#
+# ---------------------------------------------------------------------------
 # Builds the golden image: ReDroid with the app under test already installed.
 #
 # Runs a throwaway container on its own adb server and its own published port,

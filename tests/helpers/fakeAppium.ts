@@ -213,6 +213,8 @@ export interface FakeDeviceOptions {
   reportedSize?: number | null;
   appRuns?: boolean;
   packageInstalled?: boolean;
+  /** `adb install` reports a failure. */
+  installFails?: boolean;
 }
 
 /** An AndroidDevice that answers from memory, so no emulator is needed. */
@@ -221,6 +223,7 @@ export class FakeDevice implements AndroidDevice {
   readonly launches: Array<{ packageName: string; activityName?: string }> = [];
   readonly scanned: string[] = [];
   readonly removed: string[] = [];
+  readonly installed: string[] = [];
 
   constructor(private readonly options: FakeDeviceOptions = {}) {}
 
@@ -259,7 +262,17 @@ export class FakeDevice implements AndroidDevice {
   }
 
   async isPackageInstalled(): Promise<boolean> {
-    return this.options.packageInstalled !== false;
+    // Once installed, it stays installed — the point of the install path is
+    // that the second check succeeds where the first did not.
+    return this.options.packageInstalled !== false || this.installed.length > 0;
+  }
+
+  async installPackage(localApkPath: string): Promise<void> {
+    if (this.options.installFails) {
+      throw new Error(`adb install ${localApkPath} failed: INSTALL_FAILED_INVALID_APK`);
+    }
+
+    this.installed.push(localApkPath);
   }
 
   async removeFile(remotePath: string): Promise<void> {

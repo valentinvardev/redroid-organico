@@ -268,6 +268,29 @@ export async function adbIsBootAnimationDone(
   return result.code === 0 && result.stdout.trim() === 'stopped';
 }
 
+/**
+ * Installs an APK read from the worker's own filesystem.
+ *
+ * `adb install` is client-side: it reads the file locally and streams it, so
+ * this works through a remote adb server the same as a local one.
+ *
+ * The exit code lies — adb returns 0 while printing `Failure [INSTALL_FAILED…]`
+ * — so the output is what decides.
+ */
+export async function adbInstallPackage(
+  adbCommand: string,
+  target: AdbTarget,
+  localApkPath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { stdout, stderr } = await execAdb(adbCommand, target, ['install', '-r', '-g', localApkPath], { signal });
+  const output = `${stdout}\n${stderr}`;
+
+  if (/Failure|Error:|INSTALL_FAILED/i.test(output)) {
+    throw new AdbError(`adb install ${localApkPath} failed: ${output.trim()}`, { code: 1, stderr: output });
+  }
+}
+
 /** Whether the app under test is actually present on the device. */
 export async function adbIsPackageInstalled(
   adbCommand: string,

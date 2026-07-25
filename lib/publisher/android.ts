@@ -60,6 +60,17 @@ export const androidCredentialsSchema = z.object({
   /** Optional: without it the launcher activity is resolved by Android itself. */
   activityName: z.string().min(1).optional(),
 
+  /**
+   * APK on the worker's filesystem, installed onto the device when the package
+   * is absent.
+   *
+   * This is how the app reaches an ephemeral container. Baking it into a
+   * ReDroid image does not work — user apps live under /data, which ReDroid
+   * mounts at runtime, so `docker commit` never captures them. The image builds
+   * and verifies and still comes out empty.
+   */
+  apkPath: z.string().min(1).optional(),
+
   bootTimeoutSeconds: z.number().int().positive().max(900).default(180),
   appiumTimeoutSeconds: z.number().int().positive().max(900).default(120),
   /** Grace period between launching the app and the first step of the flow. */
@@ -407,6 +418,7 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
         jobId,
         accountId,
         packageName: credentials.packageName,
+        apkPath: credentials.apkPath,
         log,
         signal,
       });

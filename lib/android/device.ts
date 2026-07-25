@@ -3,6 +3,7 @@ import {
   adbIsAppRunning,
   adbIsBootAnimationDone,
   adbIsBootCompleted,
+  adbInstallPackage,
   adbIsPackageInstalled,
   adbLaunchPackage,
   adbMkdir,
@@ -29,6 +30,8 @@ export interface AndroidDevice {
   launch(packageName: string, activityName: string | undefined, signal?: AbortSignal): Promise<void>;
   isAppRunning(packageName: string, signal?: AbortSignal): Promise<boolean>;
   isPackageInstalled(packageName: string, signal?: AbortSignal): Promise<boolean>;
+  /** Installs an APK from the worker's filesystem onto the device. */
+  installPackage(localApkPath: string, signal?: AbortSignal): Promise<void>;
   removeFile(remotePath: string, signal?: AbortSignal): Promise<void>;
 }
 
@@ -108,6 +111,10 @@ export class AdbDevice implements AndroidDevice {
 
   async isPackageInstalled(packageName: string, signal?: AbortSignal): Promise<boolean> {
     return adbIsPackageInstalled(this.adbCommand, this.target, packageName, signal);
+  }
+
+  async installPackage(localApkPath: string, signal?: AbortSignal): Promise<void> {
+    await adbInstallPackage(this.adbCommand, this.target, localApkPath, signal);
   }
 
   async removeFile(remotePath: string, signal?: AbortSignal): Promise<void> {

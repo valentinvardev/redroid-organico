@@ -5,6 +5,16 @@ export interface AcquireContext {
   jobId: string;
   accountId: string;
   packageName: string;
+  /**
+   * APK on the worker's filesystem, installed when the device does not already
+   * have the package.
+   *
+   * Baking the app into a ReDroid image does not work: user apps live under
+   * /data, which ReDroid mounts at runtime, and `docker commit` only captures
+   * the container's writable layer. The image builds and verifies fine and then
+   * comes out empty — so installation has to happen against a live device.
+   */
+  apkPath?: string;
   log: JobLogger;
   signal: AbortSignal;
 }
@@ -52,7 +62,7 @@ export class AttachedDeviceProvider implements DeviceProvider {
     });
 
     await device.waitUntilReady(this.config.bootTimeoutSeconds * 1_000, context.signal);
-    await assertPackageInstalled(device, context);
+    await ensurePackageInstalled(device, context);
 
     return {
       device,
@@ -74,10 +84,16 @@ export class PackageNotInstalledError extends Error {
 }
 
 /**
- * Checked once, up front, because "the app is not installed" and "your selector
- * is wrong" look identical four steps into a flow.
+ * Guarantees the app is on the device before anything tries to drive it.
+ *
+ * Checked up front because "the app is not installed" and "your selector is
+ * wrong" look identical four steps into a flow. Installed here rather than
+ * baked into an image because a ReDroid image cannot carry it — see apkPath.
+ *
+ * On a persistent session volume this costs nothing after the first run: the
+ * install survives in /data along with the login.
  */
-export async function assertPackageInstalled(
+export async function ensurePackageInstalled(
   device: AndroidDevice,
   context: AcquireContext,
 ): Promise<void> {
@@ -85,5 +101,22 @@ export async function assertPackageInstalled(
     return;
   }
 
-  throw new PackageNotInstalledError(context.packageName);
+  if (!context.apkPath) {
+    throw new PackageNotInstalledError(context.packageName);
+  }
+
+  await context.log.info('App is missing from the device, installing it', {
+    packageName: context.packageName,
+    apkPath: context.apkPath,
+  });
+
+  await device.installPackage(context.apkPath, context.signal);
+
+  // Trust the check, not the installer: `adb install` has been known to report
+  // success for a package the package manager then cannot resolve.
+  if (!(await device.isPackageInstalled(context.packageName, context.signal))) {
+    throw new PackageNotInstalledError(context.packageName);
+  }
+
+  await context.log.info('App installed', { packageName: context.packageName });
 }

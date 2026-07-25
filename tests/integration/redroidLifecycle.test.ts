@@ -131,11 +131,38 @@ describe('EphemeralRedroidProvider', () => {
     assert.equal(docker.containers.size, 0, 'no container may survive a failed acquisition');
   });
 
-  it('destroys the container when the app under test is missing from the image', async () => {
+  it('destroys the container when the app is missing and no APK was configured', async () => {
     const { subject, docker } = provider({ device: { packageInstalled: false } });
 
     await assert.rejects(subject.acquire(context()), /not installed on the device/);
     assert.equal(docker.containers.size, 0);
+  });
+
+  it('installs the APK when the device does not have the app yet', async () => {
+    // The normal path on a fresh session volume: a ReDroid image cannot carry
+    // a user app, so the first run of every account installs it.
+    const { subject, device } = provider({ device: { packageInstalled: false } });
+
+    const acquired = await subject.acquire(context({ apkPath: '/srv/apks/sportreels.apk' }));
+
+    assert.deepEqual(device.installed, ['/srv/apks/sportreels.apk']);
+    await acquired.release();
+  });
+
+  it('does not reinstall when the app is already on the device', async () => {
+    const { subject, device } = provider();
+
+    const acquired = await subject.acquire(context({ apkPath: '/srv/apks/sportreels.apk' }));
+
+    assert.deepEqual(device.installed, [], 'a persistent volume keeps the install across runs');
+    await acquired.release();
+  });
+
+  it('destroys the container when the install itself fails', async () => {
+    const { subject, docker } = provider({ device: { packageInstalled: false, installFails: true } });
+
+    await assert.rejects(subject.acquire(context({ apkPath: '/srv/apks/broken.apk' })), /INSTALL_FAILED/);
+    assert.equal(docker.containers.size, 0, 'a failed install must not strand the container');
   });
 
   it('reports the container logs when it exits before ADB is up', async () => {
