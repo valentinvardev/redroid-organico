@@ -120,10 +120,30 @@ function parseCredentials(raw: unknown): AndroidCredentials {
   return parsed.data;
 }
 
-/** Empty template means no screen bridge is wired up; the job still runs. */
+/**
+ * Builds the viewer URL from the configured template.
+ *
+ * Two placeholders, because ws-scrcpy needs the serial at two nesting levels:
+ * once in its own `udid` parameter, and again inside the `ws` parameter, whose
+ * whole value is percent-encoded — so the serial there ends up encoded twice
+ * (`:` becomes `%253A`, not `%3A`). Getting that wrong produces a viewer that
+ * loads and shows a grey rectangle, with no error anywhere.
+ *
+ *   {serial}        serial encoded once
+ *   {serialDouble}  serial encoded twice, for use inside an encoded parameter
+ *
+ * Empty template means no screen bridge is wired up; the job still runs.
+ */
 function viewerUrlFor(serial: string): string | undefined {
   const template = getEnv().DEVICE_VIEWER_URL_TEMPLATE;
-  return template ? template.replace('{serial}', encodeURIComponent(serial)) : undefined;
+
+  if (!template) {
+    return undefined;
+  }
+
+  const once = encodeURIComponent(serial);
+
+  return template.split('{serialDouble}').join(encodeURIComponent(once)).split('{serial}').join(once);
 }
 
 function defaultProvider(credentials: AndroidCredentials): DeviceProvider {
