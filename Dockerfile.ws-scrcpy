@@ -33,11 +33,22 @@ RUN cd dist && npm install --no-audit --no-fund --omit=dev
 
 FROM node:20-bookworm-slim AS runtime
 
-# adbkit shells out to the adb binary for some operations even when pointed at
-# a remote server.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends adb ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+
+# ws-scrcpy uses two different paths to reach a device: adbkit for the device
+# list, and the adb *binary* to launch scrcpy-server on the phone. The env vars
+# steer the library; the binary ignores them and starts a private server that
+# knows about no devices — which shows up as a device that lists fine and then
+# fails with "device not found" the moment you try to stream it.
+#
+# Rather than guess which of the several ANDROID_ADB_SERVER_* spellings this
+# adb build honours, /usr/local/bin comes first in PATH and every invocation is
+# routed to the shared server explicitly.
+RUN printf '#!/bin/sh\nexec /usr/bin/adb -H "${ADB_HOST:-127.0.0.1}" -P "${ADB_PORT:-5037}" "$@"\n' \
+      > /usr/local/bin/adb \
+ && chmod +x /usr/local/bin/adb
 
 WORKDIR /app
 COPY --from=build /src/dist ./
