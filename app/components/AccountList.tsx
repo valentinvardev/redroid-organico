@@ -75,13 +75,24 @@ export function AccountList() {
                   <span className="hint">{session.hint}</span>
                 </div>
 
+                {/*
+                  Never disabled on ONBOARDING. That state can be a leftover
+                  from a run that died, and the recovery for it runs when this
+                  button is pressed — disabling it here made the account
+                  permanently unlinkable. Pressing it during a genuinely live
+                  run is safe too: the dialog reattaches to that run instead of
+                  starting a second one.
+                */}
                 <button
                   type="button"
                   className={account.sessionState === 'VERIFIED' ? 'ghost' : 'primary'}
                   onClick={() => setLinking(account)}
-                  disabled={account.sessionState === 'ONBOARDING'}
                 >
-                  {account.sessionState === 'VERIFIED' ? 'Re-link' : 'Link account'}
+                  {account.sessionState === 'VERIFIED'
+                    ? 'Re-link'
+                    : account.sessionState === 'ONBOARDING'
+                      ? 'Resume linking'
+                      : 'Link account'}
                 </button>
               </li>
             );
