@@ -1,0 +1,31 @@
+[Unit]
+Description=Redroid Organico dashboard
+# The datastores live in compose; without this the app starts before Docker and
+# fails its first database call.
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/redroid-organico
+
+# -H 0.0.0.0 so it is reachable from outside the instance, -p 3000 fixed so a
+# busy port fails loudly instead of drifting to one the firewall does not allow.
+ExecStart=/usr/bin/npm run dev -- -H 0.0.0.0 -p 3000
+
+Restart=always
+RestartSec=5
+
+# Next ignores SIGTERM often enough that a stop would otherwise hang; systemd
+# escalates on its own.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+KillMode=mixed
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=redroid-web
+
+[Install]
+WantedBy=multi-user.target

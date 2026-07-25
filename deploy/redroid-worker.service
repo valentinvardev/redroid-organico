@@ -1,0 +1,32 @@
+[Unit]
+Description=Redroid Organico publish worker
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/redroid-organico
+
+ExecStart=/usr/bin/npm run worker
+
+Restart=always
+RestartSec=5
+
+# The worker's own shutdown waits up to 30s for in-flight jobs — a publication
+# cut in half and re-delivered can mean a duplicate post. This allows that, and
+# then escalates: a worker wedged in shutdown stops consuming and never exits,
+# which is how a pile of zombie processes accumulates while the queue fills up.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+KillMode=mixed
+
+# Anything still in flight when the escalation happens is reclaimed by
+# recoverOrphans() and the container reaper on the next boot.
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=redroid-worker
+
+[Install]
+WantedBy=multi-user.target
