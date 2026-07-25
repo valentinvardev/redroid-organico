@@ -245,6 +245,8 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
         await new Promise((resolve) => setTimeout(resolve, credentials.launchSettleMs));
       }
 
+      // This, not the launch command's exit code, is what decides whether the
+      // app came up.
       if (!(await acquired.device.isAppRunning(credentials.packageName, signal))) {
         throw permanent(
           'app_not_running',

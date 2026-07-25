@@ -224,8 +224,14 @@ export async function adbStartActivity(
 
 /**
  * Launch by package alone, letting Android resolve the launcher activity.
- * Preferred over `am start -n` because it survives the target app renaming or
- * relocating its entry activity between builds.
+ * Preferred over a hardcoded `am start -n` because it survives the target app
+ * renaming or relocating its entry activity between builds.
+ *
+ * Asks the package manager first and only falls back to `monkey`. monkey exits
+ * non-zero for benign reasons — it prints warnings like "SYS_KEYS has no
+ * physical keys" on a headless device and still launches the app — so its exit
+ * code is not a verdict. The caller's `isAppRunning` check is; this function
+ * only fails when Android says there is nothing to launch.
  */
 export async function adbLaunchPackage(
   adbCommand: string,
@@ -233,17 +239,39 @@ export async function adbLaunchPackage(
   packageName: string,
   signal?: AbortSignal,
 ) {
-  const stdout = await adbShell(
+  const resolved = await adbShellProbe(
+    adbCommand,
+    target,
+    ['cmd', 'package', 'resolve-activity', '--brief', packageName],
+    signal,
+  );
+
+  // `--brief` puts the component on the last non-empty line.
+  const component = resolved.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .pop();
+
+  if (resolved.code === 0 && component && /^[\w.]+\/[\w.$]+$/.test(component)) {
+    await adbStartActivity(adbCommand, target, component, signal);
+    return;
+  }
+
+  const monkey = await adbShellProbe(
     adbCommand,
     target,
     ['monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '1'],
     signal,
   );
 
-  if (/No activities found|Error/i.test(stdout)) {
+  const output = `${monkey.stdout}\n${monkey.stderr}`;
+
+  if (/No activities found|Monkey aborted/i.test(output)) {
     throw new AdbError(
-      `Could not launch ${packageName}: ${stdout}. Is the package installed on the device?`,
-      { code: 1, stderr: stdout },
+      `${packageName} has no launcher activity, so there is nothing to open. ` +
+        'Set activityName in the account credentials to name the entry point explicitly.',
+      { code: monkey.code, stderr: output },
     );
   }
 }
