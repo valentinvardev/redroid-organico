@@ -1,0 +1,43 @@
+{
+  "appiumUrl": "http://localhost:4723",
+
+  "adbHost": "localhost",
+  "adbPort": 5037,
+
+  "packageName": "com.sportreels.app",
+  "remoteVideoPath": "/sdcard/DCIM/upload.mp4",
+
+  "bootTimeoutSeconds": 240,
+  "appiumTimeoutSeconds": 180,
+  "launchSettleMs": 4000,
+
+  "redroid": {
+    "image": "sportreels/redroid:13-golden",
+    "connectVia": "container-name",
+    "network": "redroid-net",
+    "memoryLimit": "4g",
+    "gpuMode": "guest",
+    "startTimeoutSeconds": 240
+  },
+
+  "flow": [
+    {
+      "action": "assertVisible",
+      "name": "REPLACE ME - this flow is a placeholder",
+      "using": "id",
+      "value": "com.sportreels.app:id/replace_with_a_real_id",
+      "timeoutMs": 15000
+    }
+  ],
+
+  "verifyFlow": [
+    {
+      "action": "assertVisible",
+      "name": "REPLACE ME - profile handle when logged in",
+      "using": "id",
+      "value": "com.sportreels.app:id/replace_with_a_real_id",
+      "captureText": true,
+      "timeoutMs": 15000
+    }
+  ]
+}

@@ -65,7 +65,7 @@ describe('addAccount script', () => {
         ]);
       },
       {
-        message: 'Android driver requires --appium-url',
+        message: 'Android driver requires --appium-url (or --credentials-file with the whole config)',
       },
     );
   });

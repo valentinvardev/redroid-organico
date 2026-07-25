@@ -39,7 +39,9 @@ function usage(): string {
     '',
     '  tiktok:  --access-token <token> [--refresh-token <token>] [--expires-at <iso>] [--open-id <id>]',
     '',
-    '  android: --appium-url <url> --package-name <pkg> --flow <path/to/flow.json>',
+    '  android: --credentials-file <path/to/credentials.json>   (whole config in one file)',
+    '           ...or build it from flags:',
+    '           --appium-url <url> --package-name <pkg> --flow <path/to/flow.json>',
     '           [--verify-flow <path/to/verify.json>]   (required for interactive onboarding)',
     '           [--activity-name <activity>] [--device-serial <serial>]',
     '           [--adb-command <cmd>] [--adb-host <host>] [--adb-port <port>]',
@@ -85,11 +87,49 @@ async function readFlow(argv: string[], flag: string, required: boolean, example
  * so a flow that could never pass — no assertion, an unsupported locator
  * strategy — is rejected now rather than at 3am inside a worker.
  */
+async function readJsonFile(filePath: string): Promise<unknown> {
+  const resolved = path.resolve(process.cwd(), filePath);
+  let raw: string;
+
+  try {
+    raw = await readFile(resolved, 'utf8');
+  } catch (cause) {
+    throw new Error(`Could not read ${resolved}: ${cause instanceof Error ? cause.message : cause}`);
+  }
+
+  try {
+    return JSON.parse(raw.replace(/^﻿/, ''));
+  } catch (cause) {
+    throw new Error(`${resolved} is not valid JSON: ${cause instanceof Error ? cause.message : cause}`);
+  }
+}
+
 async function buildAndroidCredentials(argv: string[]): Promise<Record<string, unknown>> {
+  /**
+   * The whole credentials object from one file. Anything with a `redroid` block
+   * is easier to write and review as JSON than as fifteen flags, and it is the
+   * same shape the worker reads — so what you edit is what runs.
+   */
+  const credentialsFile = arg('--credentials-file', argv);
+
+  if (credentialsFile) {
+    const parsed = androidCredentialsSchema.safeParse(await readJsonFile(credentialsFile));
+
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('\n');
+
+      throw new Error(`${credentialsFile} is not a valid Android configuration:\n${issues}`);
+    }
+
+    return parsed.data;
+  }
+
   const appiumUrl = arg('--appium-url', argv);
 
   if (!appiumUrl) {
-    throw new Error('Android driver requires --appium-url');
+    throw new Error('Android driver requires --appium-url (or --credentials-file with the whole config)');
   }
 
   if (!arg('--package-name', argv)) {
