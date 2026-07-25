@@ -124,6 +124,17 @@ describe('interactive onboarding', () => {
     assert.equal(job.maxAttempts, 1, 'a second unattended device is worse than no device');
   });
 
+  it('enqueues with the row budget, so a failed onboarding is not retried', async () => {
+    const { job } = await createOnboardingJob({ userId, accountId });
+    const { getPublishQueue } = await import('@/lib/queue/publishQueue');
+
+    const queued = await getPublishQueue().getJob(job.id);
+
+    // The queue default is RETRY_ATTEMPTS (3). Honouring it here would boot a
+    // second device for an operator whose browser tab is long gone.
+    assert.equal(queued?.opts.attempts, 1, 'BullMQ must respect the job row maxAttempts');
+  });
+
   it('refuses a second onboarding while one is already waiting for a person', async () => {
     const { job } = await createOnboardingJob({ userId, accountId });
     await prisma.job.update({ where: { id: job.id }, data: { status: JobStatus.AWAITING_HUMAN } });

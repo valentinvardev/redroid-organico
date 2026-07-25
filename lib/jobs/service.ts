@@ -152,6 +152,12 @@ async function enqueue(job: Job): Promise<void> {
       // of the same job is dropped by Redis rather than processed twice.
       jobId: job.id,
       delay,
+      // The row's own budget, not the queue default. An interactive onboarding
+      // job is created with maxAttempts 1 on purpose — retrying it boots a
+      // second device for an operator who is no longer watching — and the
+      // default of 3 was overriding that, so every failure spawned another
+      // container while processJob had already written the job off as FAILED.
+      attempts: job.maxAttempts,
     },
   );
 
