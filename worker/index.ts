@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db';
 import { getEnv } from '@/lib/env';
 import { closeRedis } from '@/lib/queue/connection';
 import { DEAD_LETTER_QUEUE, PUBLISH_QUEUE } from '@/lib/queue/publishQueue';
-import { createPublishWorker, recoverOrphans } from '@/lib/worker/createWorker';
+import { createPublishWorker, reconcileSlots, recoverOrphans } from '@/lib/worker/createWorker';
 import { reapAndroidContainers, startAndroidReaper, type ReaperHandle } from '@/lib/android/reaper';
 
 const env = getEnv();
@@ -40,6 +40,12 @@ async function main(): Promise<void> {
 
   if (recovered > 0) {
     console.log(`[worker] recovered ${recovered} orphaned job(s)`);
+  }
+
+  const corrected = await reconcileSlots();
+
+  if (corrected > 0) {
+    console.log(`[worker] reset ${corrected} leaked account concurrency slot(s)`);
   }
 
   // Deliberately after recoverOrphans(): that call moves jobs stranded by a

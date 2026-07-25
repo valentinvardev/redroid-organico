@@ -85,3 +85,45 @@ export async function reserve(
 export async function touch(accountId: string): Promise<void> {
   await getRedis().expire(slotsKey(accountId), SLOT_TTL_SECONDS);
 }
+
+/**
+ * Rewrites every account's in-flight counter from what the database says is
+ * actually running.
+ *
+ * A worker killed without running `release()` leaves its slot counted. The TTL
+ * bounds that to fifteen minutes, but for an account with maxConcurrent 1 those
+ * are fifteen minutes of every job being deferred with no explanation beyond
+ * "max_concurrent" — which reads like a limit working correctly.
+ *
+ * Run at startup, after recoverOrphans() has moved stranded rows out of the
+ * running states, so the count it reads is trustworthy. Counting from the
+ * database rather than tracking releases keeps this correct with several
+ * workers: the answer does not depend on which process crashed.
+ */
+export async function reconcileAccountSlots(
+  runningPerAccount: Map<string, number>,
+  accountIds: string[],
+): Promise<number> {
+  const redis = getRedis();
+  let corrected = 0;
+
+  for (const accountId of accountIds) {
+    const key = slotsKey(accountId);
+    const stored = Number((await redis.get(key)) ?? 0);
+    const actual = runningPerAccount.get(accountId) ?? 0;
+
+    if (stored === actual) {
+      continue;
+    }
+
+    if (actual === 0) {
+      await redis.del(key);
+    } else {
+      await redis.set(key, actual, 'EX', SLOT_TTL_SECONDS);
+    }
+
+    corrected += 1;
+  }
+
+  return corrected;
+}

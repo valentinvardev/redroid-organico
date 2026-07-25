@@ -14,6 +14,7 @@ import {
   type PublishJobData,
 } from '@/lib/queue/publishQueue';
 import { DeferJobError, processJob } from './processJob';
+import { reconcileAccountSlots } from './rateLimiter';
 
 /**
  * Two ways a job ends up in the database with nothing in Redis to drive it:
@@ -110,6 +111,30 @@ export async function recoverOrphans(): Promise<number> {
   }
 
   return recovered + stranded;
+}
+
+/**
+ * Clears per-account concurrency slots left counted by workers that died
+ * without releasing them. Deliberately after recoverOrphans(), which is what
+ * makes the database's idea of "running" trustworthy.
+ */
+export async function reconcileSlots(): Promise<number> {
+  const accounts = await prisma.account.findMany({ select: { id: true } });
+
+  const running = await prisma.job.groupBy({
+    by: ['accountId'],
+    where: {
+      status: { in: [JobStatus.PROCESSING, JobStatus.AWAITING_HUMAN, JobStatus.VERIFYING] },
+    },
+    _count: { _all: true },
+  });
+
+  const perAccount = new Map(running.map((row) => [row.accountId, row._count._all]));
+
+  return reconcileAccountSlots(
+    perAccount,
+    accounts.map((account) => account.id),
+  );
 }
 
 export async function toDeadLetter(jobId: string, reason: string): Promise<void> {
