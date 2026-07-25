@@ -327,7 +327,7 @@ Ejemplo de bloque `redroid` en las credenciales de la cuenta:
 
 ```json
 {
-  "image": "sportreels/redroid:11-golden",
+  "image": "sportreels/redroid:13-golden",
   "connectVia": "container-name",
   "network": "redroid-net",
   "memoryLimit": "4g",
@@ -339,6 +339,63 @@ Ejemplo de bloque `redroid` en las credenciales de la cuenta:
 La imagen es tuya: ReDroid con `com.sportreels.app` ya instalado. Tiene que
 coincidir con la arquitectura del host — una imagen arm64 en un host x86 no
 arranca, o va a paso de qemu.
+
+#### Preparar el host (esto no es opcional)
+
+Verificado en Ubuntu 26.04 LTS, kernel 7.0.0-aws, Graviton arm64.
+
+**binderfs.** Los kernels modernos traen `CONFIG_ANDROID_BINDER_DEVICES=""`, así
+que no existe `/dev/binder` y el viejo
+`modprobe binder_linux devices="binder,hwbinder,vndbinder"` no crea nada. Los
+devices viven en binderfs:
+
+```bash
+sudo modprobe binder_linux
+sudo mkdir -p /dev/binderfs
+sudo mount -t binder binder /dev/binderfs
+ls /dev/binderfs        # binder, binder-control, hwbinder, vndbinder
+
+# Que sobreviva reboots:
+echo 'binder /dev/binderfs binder nofail 0 0' | sudo tee -a /etc/fstab
+```
+
+El provider monta ese path dentro del contenedor. Se configura con
+`binderfsPath` (default `/dev/binderfs`, `null` para deshabilitarlo en un host
+que sí exponga `/dev/binder`).
+
+Para confirmar que el kernel sirve:
+
+```bash
+grep -iE 'BINDER|ASHMEM' /boot/config-$(uname -r)
+grep -i binder /proc/filesystems     # necesitás "nodev binder"
+```
+
+**memfd, no ashmem.** Si el grep de arriba no muestra ninguna línea de `ASHMEM`,
+el kernel no lo tiene — y **ReDroid 11 no arranca sin ashmem**. Hay que usar
+imagen 12 o 13, que caen a memfd, y pedírselo explícitamente. El provider pasa
+`androidboot.use_memfd=1` por defecto (`useMemfd: false` para desactivarlo). Sin
+eso el contenedor arranca y se cuelga a mitad del boot sin error visible, que es
+la peor forma de fallar.
+
+**Probar a mano antes de enchufar el worker.** Cuando algo no bootea, esto aísla
+el problema en un minuto:
+
+```bash
+docker run -itd --privileged --name redroid-smoke \
+  -v /dev/binderfs:/dev/binderfs -p 127.0.0.1:5599:5555 \
+  redroid/redroid:13.0.0-latest \
+  androidboot.redroid_gpu_mode=guest androidboot.use_memfd=1
+
+adb connect localhost:5599
+adb -s localhost:5599 shell getprop sys.boot_completed   # querés 1
+adb -s localhost:5599 shell getprop init.svc.bootanim    # querés stopped
+adb -s localhost:5599 shell getprop ro.product.cpu.abi   # arm64-v8a en Graviton
+
+docker rm -f redroid-smoke
+```
+
+Esos dos primeros properties son exactamente las compuertas que chequea
+`AdbDevice.waitUntilReady()`.
 
 ## Autenticación
 

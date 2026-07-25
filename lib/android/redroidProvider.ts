@@ -49,6 +49,27 @@ export const redroidConfigSchema = z.object({
   /** `guest` is software rendering — the only option on a server with no GPU. */
   gpuMode: z.enum(['guest', 'host', 'auto']).default('guest'),
 
+  /**
+   * Host path where binderfs is mounted, bind-mounted into the container.
+   *
+   * Kernels from 5.x on set CONFIG_ANDROID_BINDER_DEVICES="" and create no
+   * static /dev/binder; the devices live in binderfs instead. Mount it on the
+   * host first:
+   *
+   *   sudo mount -t binder binder /dev/binderfs
+   *
+   * Set to null on a host that still exposes /dev/binder directly.
+   */
+  binderfsPath: z.string().min(1).nullable().default('/dev/binderfs'),
+
+  /**
+   * Android's shared memory. Modern kernels dropped ashmem entirely — a 26.04
+   * AWS kernel has no CONFIG_ASHMEM at all — and ReDroid 12+ falls back to
+   * memfd, but only when told to. Without this the container boots and then
+   * hangs with no obvious error.
+   */
+  useMemfd: z.boolean().default(true),
+
   /** Extra `androidboot.*` arguments appended verbatim. */
   extraArgs: z.array(z.string()).default([]),
 
@@ -137,12 +158,18 @@ export class EphemeralRedroidProvider implements DeviceProvider {
         network: config.network,
         memoryLimit: config.memoryLimit,
         publishContainerPort: config.connectVia === 'published-port' ? 5555 : undefined,
-        volumes: [{ source: volume, target: '/data' }],
+        volumes: [
+          { source: volume, target: '/data' },
+          ...(config.binderfsPath
+            ? [{ source: config.binderfsPath, target: '/dev/binderfs' }]
+            : []),
+        ],
         command: [
           `androidboot.redroid_width=${config.width}`,
           `androidboot.redroid_height=${config.height}`,
           `androidboot.redroid_dpi=${config.dpi}`,
           `androidboot.redroid_gpu_mode=${config.gpuMode}`,
+          ...(config.useMemfd ? ['androidboot.use_memfd=1'] : []),
           ...config.extraArgs,
         ],
       },

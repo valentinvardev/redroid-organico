@@ -75,9 +75,19 @@ describe('EphemeralRedroidProvider', () => {
     assert.equal(spec.privileged, true, 'ReDroid needs binder/ashmem from the host kernel');
 
     // The session volume is per account, so two accounts can never read each
-    // other's logged-in state.
-    assert.deepEqual(spec.volumes, [{ source: 'redroid-session-account-1', target: '/data' }]);
+    // other's logged-in state. binderfs comes from the host: modern kernels
+    // create no static /dev/binder, so without this the container cannot boot.
+    assert.deepEqual(spec.volumes, [
+      { source: 'redroid-session-account-1', target: '/data' },
+      { source: '/dev/binderfs', target: '/dev/binderfs' },
+    ]);
     assert.ok(docker.volumes.has('redroid-session-account-1'));
+
+    // Kernels without ashmem hang mid-boot unless memfd is requested.
+    assert.ok(
+      spec.command?.includes('androidboot.use_memfd=1'),
+      `expected use_memfd in ${spec.command?.join(' ')}`,
+    );
 
     // Docker allocated the host port; the serial is derived from it, not guessed.
     assert.match(acquired.serial ?? '', /^127\.0\.0\.1:\d+$/);
