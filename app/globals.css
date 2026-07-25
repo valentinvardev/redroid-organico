@@ -569,14 +569,16 @@ code {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  /* Tight, because the phone screen inside wants every pixel of height. */
+  padding: 16px;
   background: rgba(2, 6, 23, 0.78);
   backdrop-filter: blur(4px);
 }
 
 .onboarding-panel {
-  width: min(920px, 100%);
-  max-height: calc(100vh - 48px);
+  /* Wide enough for a portrait phone plus ws-scrcpy's control column. */
+  width: min(1100px, 100%);
+  max-height: calc(100vh - 32px);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
@@ -635,8 +637,10 @@ code {
 }
 
 .onboarding-screen {
+  /* The embedded page is a portrait 9:16 screen with a control column beside
+     it. A short, full-width box crops both; height is what it actually needs. */
   width: 100%;
-  height: min(60vh, 620px);
+  height: min(78vh, 860px);
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #000;
