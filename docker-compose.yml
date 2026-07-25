@@ -163,10 +163,18 @@ services:
   # twice. A viewer running its own adb server would see nothing.
   ws-scrcpy:
     profiles: ["android"]
-    image: scrougevnc/ws-scrcpy
+    # Built from source: NetrisTV publishes no official image.
+    build:
+      context: .
+      dockerfile: Dockerfile.ws-scrcpy
     environment:
-      ADB_SERVER_HOSTNAME: adb-server
-      ADB_SERVER_PORT: "5037"
+      # adbkit and the Android tools disagree on which variable names they read,
+      # and getting it wrong shows up as an empty device list rather than an
+      # error. All four are set so whichever the build honours is correct.
+      ADB_HOST: adb-server
+      ADB_PORT: "5037"
+      ANDROID_ADB_SERVER_HOST: adb-server
+      ANDROID_ADB_SERVER_PORT: "5037"
     ports:
       # Reached from the operator's browser, not from another container, so this
       # must be published on whatever host the dashboard is served from.

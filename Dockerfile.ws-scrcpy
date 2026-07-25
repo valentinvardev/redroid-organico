@@ -1,0 +1,42 @@
+# ws-scrcpy built from source: the screen the operator sees during onboarding.
+#
+# NetrisTV publishes no official image, and the community tags we tried did not
+# exist. Building from the repository removes the dependency on someone else's
+# tag staying published — the same reason Appium is built here rather than
+# pulled.
+#
+# It reaches devices through the SHARED adb server, never its own. A viewer with
+# its own server would see an empty device list: the device is attached over TCP
+# by the worker, and only the server that ran `adb connect` knows about it.
+FROM node:20-bookworm-slim AS build
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git python3 make g++ ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Not pinned to a tag because the project does not publish usable ones. Pin the
+# commit below once a working revision is confirmed, the way appium is pinned.
+ARG WS_SCRCPY_REF=master
+RUN git clone --depth 1 --branch "${WS_SCRCPY_REF}" https://github.com/NetrisTV/ws-scrcpy.git .
+
+RUN npm install --no-audit --no-fund
+RUN npm run dist
+
+
+FROM node:20-bookworm-slim AS runtime
+
+# adbkit shells out to the adb binary for some operations even when pointed at
+# a remote server.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends adb ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /src/dist ./
+
+RUN npm install --no-audit --no-fund --omit=dev
+
+EXPOSE 8000
+CMD ["node", "index.js"]
