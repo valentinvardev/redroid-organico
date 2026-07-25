@@ -36,6 +36,8 @@ interface OAuthCredentials {
 function usage(): string {
   return [
     'Usage: npm run account:add -- --user <userId> --name <accountName> --driver <tiktok|android>',
+    '   or: npm run account:add -- --account <accountId> --driver android --credentials-file <file>',
+    '       (rewrites an existing account instead of creating another one)',
     '',
     '  tiktok:  --access-token <token> [--refresh-token <token>] [--expires-at <iso>] [--open-id <id>]',
     '',
@@ -190,13 +192,38 @@ export async function runAddAccount(argv: string[]): Promise<string> {
   const userId = arg('--user', argv);
   const name = arg('--name', argv);
   const driver = arg('--driver', argv) ?? 'tiktok';
-
-  if (!userId || !name) {
-    throw new Error(usage());
-  }
+  const updateId = arg('--account', argv);
 
   if (!['tiktok', 'android'].includes(driver)) {
     throw new Error('Unsupported driver. Valid values are tiktok or android.');
+  }
+
+  /**
+   * Rewriting an existing account rather than making another one. Selectors and
+   * package names get corrected several times before a flow is right, and a new
+   * account per correction leaves a pile of near-identical rows and a session
+   * volume for each.
+   */
+  if (updateId) {
+    const existing = await prisma.account.findUnique({ where: { id: updateId } });
+
+    if (!existing) {
+      throw new Error(`Account ${updateId} not found`);
+    }
+
+    const updated = await prisma.account.update({
+      where: { id: existing.id },
+      data: {
+        credentials: seal(driver === 'android' ? await buildAndroidCredentials(argv) : buildOAuthCredentials(argv)),
+        ...(name ? { name } : {}),
+      },
+    });
+
+    return `Updated ${driver} account ${updated.id} (${updated.name})`;
+  }
+
+  if (!userId || !name) {
+    throw new Error(usage());
   }
 
   const credentials =
