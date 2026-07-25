@@ -84,6 +84,18 @@ export interface AndroidPublisherDeps {
 }
 
 function parseCredentials(raw: unknown): AndroidCredentials {
+  // Worth its own message: schema output for a null root reads "expected
+  // object, received null", which is true and tells you nothing about the
+  // account never having been given credentials in the first place. The seeded
+  // development account is deliberately in this state.
+  if (raw === null || raw === undefined) {
+    throw permanent(
+      'account_has_no_credentials',
+      'This account has no stored credentials, so there is nothing telling the worker which app to drive. ' +
+        'Create one with:  npm run account:add -- --user <userId> --name <name> --driver android --credentials-file <file.json>',
+    );
+  }
+
   const parsed = androidCredentialsSchema.safeParse(raw);
 
   if (!parsed.success) {

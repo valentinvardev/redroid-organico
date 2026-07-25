@@ -279,6 +279,15 @@ describe('AndroidPublisher', () => {
     assert.equal(error.retryable, false);
   });
 
+  it('says so plainly when the account has no credentials at all', async () => {
+    const { publisher: subject } = publisher();
+    const error = await rejection(subject.publish(request({ credentials: null })));
+
+    assert.equal(error.code, 'account_has_no_credentials');
+    assert.equal(error.retryable, false);
+    assert.match(error.message, /account:add/, 'the message should say how to fix it');
+  });
+
   it('rejects an account that never declared which package to drive', async () => {
     const { publisher: subject } = publisher();
     const invalid = credentials();
