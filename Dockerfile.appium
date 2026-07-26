@@ -13,6 +13,20 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends adb ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
+# The UiAutomator2 driver does not look for `adb` on PATH — it builds the path
+# from ANDROID_HOME and expects an SDK layout, refusing to start otherwise with
+# "Neither ANDROID_HOME nor ANDROID_SDK_ROOT environment variable was exported".
+#
+# Installing the whole Android SDK for one binary is not worth it, so the
+# layout is synthesised around the adb apt already installed. Symlinked from
+# wherever the package put it rather than a hardcoded path, because that has
+# moved between Debian releases.
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+RUN mkdir -p "$ANDROID_HOME/platform-tools" \
+ && ln -sf "$(command -v adb)" "$ANDROID_HOME/platform-tools/adb" \
+ && "$ANDROID_HOME/platform-tools/adb" version
+
 # Baked in at build time so a container start never reaches out to the network.
 # The uiautomator2 driver bundles its server APKs, which is most of the weight.
 #
