@@ -12,6 +12,7 @@ import {
   adbShell,
   adbShellProbe,
   adbStartActivity,
+  type AdbResult,
   type AdbTarget,
 } from './adb';
 
@@ -34,6 +35,13 @@ export interface AndroidDevice {
   /** Installs an APK from the worker's filesystem onto the device. */
   installPackage(localApkPath: string, signal?: AbortSignal): Promise<void>;
   removeFile(remotePath: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Runs a command on the device and reports how it went, without throwing:
+   * the exit code is the answer, not an error. One command per call — adb
+   * re-parses its arguments in the device shell, so a quoted `sh -c` compound
+   * arrives mangled.
+   */
+  probe(args: string[], signal?: AbortSignal): Promise<AdbResult>;
 }
 
 function remoteDirectory(remotePath: string): string {
@@ -177,5 +185,9 @@ export class AdbDevice implements AndroidDevice {
 
   async removeFile(remotePath: string, signal?: AbortSignal): Promise<void> {
     await adbRemoveFile(this.adbCommand, this.target, remotePath, signal);
+  }
+
+  async probe(args: string[], signal?: AbortSignal): Promise<AdbResult> {
+    return adbShellProbe(this.adbCommand, this.target, args, signal);
   }
 }

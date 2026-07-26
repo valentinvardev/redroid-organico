@@ -35,6 +35,7 @@ BOOT_TIMEOUT=180
 APK=""
 TAG=""
 PACKAGE=""
+TOOLS=()
 
 usage() {
   cat <<'USAGE'
@@ -48,6 +49,11 @@ Usage: build-golden-image.sh --apk <file.apk> --tag <image:tag> [options]
   --base <image>      Base ReDroid image (default: redroid/redroid:13.0.0-latest)
   --binderfs <path>   Host binderfs mount (default: /dev/binderfs, "" to skip)
   --boot-timeout <s>  Seconds to wait for Android to boot (default: 180)
+  --tool <file>       Static binary to place in /system/bin (repeatable).
+                      Use it for a statically linked arm64 curl: the egress
+                      check runs on the device, and AOSP ships no curl. It has
+                      to go in /system rather than /data, because /data is a
+                      runtime mount that docker commit never captures.
 USAGE
 }
 
@@ -59,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     --base) BASE_IMAGE="$2"; shift 2 ;;
     --binderfs) BINDERFS="$2"; shift 2 ;;
     --boot-timeout) BOOT_TIMEOUT="$2"; shift 2 ;;
+    --tool) TOOLS+=("$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -145,6 +152,37 @@ done
 
 step "Installing $(basename "$APK")"
 adb -P "$ADB_PORT" -s "$SERIAL" install -r "$APK"
+
+# /system, not /data: ReDroid mounts /data at runtime and `docker commit` only
+# captures the writable layer, which is the whole reason the APK above cannot be
+# baked in either. /system does live in the image layers.
+if (( ${#TOOLS[@]} > 0 )); then
+  step "Adding ${#TOOLS[@]} tool(s) to /system/bin"
+  adb -P "$ADB_PORT" -s "$SERIAL" root >/dev/null 2>&1 || true
+  sleep 2
+  adb -P "$ADB_PORT" connect "$SERIAL" >/dev/null 2>&1 || true
+
+  adb -P "$ADB_PORT" -s "$SERIAL" remount >/dev/null 2>&1 \
+    || adb -P "$ADB_PORT" -s "$SERIAL" shell mount -o rw,remount /system >/dev/null 2>&1 \
+    || die "could not make /system writable — this image may enforce verity, in which case set
+proxyGateway.egressCheck.url to an http:// endpoint and let the check fall back to busybox wget."
+
+  for tool in "${TOOLS[@]}"; do
+    [[ -f "$tool" ]] || die "tool not found: $tool"
+    name="$(basename "$tool")"
+
+    adb -P "$ADB_PORT" -s "$SERIAL" push "$tool" "/system/bin/$name" >/dev/null
+    adb -P "$ADB_PORT" -s "$SERIAL" shell chmod 0755 "/system/bin/$name"
+
+    # A dynamically linked binary pushes fine and then fails with "not
+    # executable" at the moment a job needs it, which is the worst time to find
+    # out. Prove it runs now.
+    adb -P "$ADB_PORT" -s "$SERIAL" shell "$name" --version >/dev/null 2>&1 \
+      || die "$name does not run on the device — it has to be statically linked for arm64"
+
+    echo "    $name ok"
+  done
+fi
 
 if [[ -z "$PACKAGE" ]] && command -v aapt >/dev/null; then
   PACKAGE="$(aapt dump badging "$APK" 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"

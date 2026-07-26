@@ -215,6 +215,10 @@ export interface FakeDeviceOptions {
   packageInstalled?: boolean;
   /** `adb install` reports a failure. */
   installFails?: boolean;
+  /** What the device answers when asked for its own address. */
+  egressIp?: string;
+  /** Which fetch tools exist on the device. Empty means the check has none. */
+  egressTools?: string[];
 }
 
 /** An AndroidDevice that answers from memory, so no emulator is needed. */
@@ -224,6 +228,7 @@ export class FakeDevice implements AndroidDevice {
   readonly scanned: string[] = [];
   readonly removed: string[] = [];
   readonly installed: string[] = [];
+  readonly probes: string[][] = [];
 
   constructor(private readonly options: FakeDeviceOptions = {}) {}
 
@@ -277,6 +282,22 @@ export class FakeDevice implements AndroidDevice {
 
   async removeFile(remotePath: string): Promise<void> {
     this.removed.push(remotePath);
+  }
+
+  /**
+   * Answers as a device with `curl` and no `wget` unless told otherwise, which
+   * is what a golden image built with `--tool curl` looks like.
+   */
+  async probe(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+    this.probes.push(args);
+
+    const tools = this.options.egressTools ?? ['curl'];
+
+    if (!tools.includes(args[0])) {
+      return { stdout: '', stderr: `${args[0]}: inaccessible or not found`, code: 127 };
+    }
+
+    return { stdout: `${this.options.egressIp ?? '203.0.113.7'}\n`, stderr: '', code: 0 };
   }
 }
 

@@ -27,6 +27,7 @@ import {
   type AppiumSessionInfo,
 } from '@/lib/android/appium';
 import { captureEvidence } from '@/lib/android/evidence';
+import { EgressLeakError, EgressUnreachableError } from '@/lib/android/egressCheck';
 import { redactProxyUrl, type ProxyRuntimeConfig } from '@/lib/proxy/config';
 import { runUiFlow, uiFlowSchema, type UiFlowResult, UiStepError } from '@/lib/android/uiFlow';
 
@@ -229,6 +230,19 @@ function classify(error: unknown): PublishError {
 
   if (error instanceof PackageNotInstalledError) {
     return permanent('app_not_installed', error.message, error);
+  }
+
+  // Permanent on purpose. A leak is a configuration fault — the rules did not
+  // apply, or the account is on a device that cannot be namespaced — and three
+  // retries would be three more chances to publish from the wrong address.
+  if (error instanceof EgressLeakError) {
+    return permanent('egress_leak_detected', error.message, error);
+  }
+
+  // The opposite case: nothing answered. Residential proxies drop connections
+  // for a living, so this is worth another attempt.
+  if (error instanceof EgressUnreachableError) {
+    return transient('egress_unreachable', error.message, error);
   }
 
   if (error instanceof UiStepError) {
@@ -496,7 +510,14 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
         signal,
       });
     } catch (error) {
-      if (error instanceof PackageNotInstalledError || error instanceof PublishError) {
+      if (
+        error instanceof PackageNotInstalledError ||
+        error instanceof PublishError ||
+        // Would otherwise be flattened into a retryable `device_not_ready`,
+        // which is the one thing a leak must never be.
+        error instanceof EgressLeakError ||
+        error instanceof EgressUnreachableError
+      ) {
         throw error;
       }
 
