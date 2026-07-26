@@ -115,33 +115,24 @@ async function main(): Promise<void> {
     const allRoutes = await docker(['exec', GATEWAY, 'ip', 'route', 'show', 'table', 'all']);
     console.log(allRoutes.stdout.trim() || allRoutes.stderr.trim() || '    (none)');
 
-    console.log('\n==> exit IP of a container INSIDE the gateway namespace');
-    console.log('    (this is the test — an Android device sees exactly this)');
-    // Cloudflare's trace endpoint, hit by IP so no DNS is needed — a container
-    // joined with `--network container:` often cannot resolve names, which
-    // would look like a routing failure when it is only DNS.
+    console.log('\n==> connection from INSIDE the namespace, verbose, over plain HTTP');
+    console.log('    (shows exactly where it stalls: TCP connect vs TLS handshake)');
+    // Plain HTTP on port 80, no TLS, verbose. If the TCP connect completes and
+    // it stalls waiting for the body, the tunnel forwards but large packets are
+    // being dropped — an MTU/MSS problem. If the connect itself never
+    // completes, nothing is reaching the far side through tun2socks.
     const probe = await docker([
       'run', '--rm', '--network', `container:${GATEWAY}`,
-      PROBE_IMAGE, '-s', '--max-time', '20', 'https://1.1.1.1/cdn-cgi/trace',
+      PROBE_IMAGE, '-v', '--max-time', '15', 'http://1.1.1.1/cdn-cgi/trace',
     ]);
 
-    const body = probe.stdout.trim();
-    const ipLine = /(?:^|\n)ip=([0-9a-f.:]+)/i.exec(body);
+    const out = `${probe.stdout}\n${probe.stderr}`.trim();
+    console.log(out || '    (nothing at all)');
 
+    const ipLine = /(?:^|\n)ip=([0-9a-f.:]+)/i.exec(probe.stdout);
     if (ipLine) {
-      const exitIp = ipLine[1];
-      console.log(`\n    exit IP: ${exitIp}`);
-      console.log(`    proxy IP: ${runtime.host}`);
-      console.log(
-        exitIp === runtime.host
-          ? '\n    ✓ Traffic leaves through the proxy. The gateway routes a plain container correctly.'
-          : '\n    ✗ Traffic does NOT leave through the proxy — it is bypassing tun2socks.',
-      );
-    } else if (body) {
-      console.log(`    raw: ${body}`);
-    } else {
-      console.log(`    no answer: ${probe.stderr.trim()}`);
-      console.log('    (dropped packets — fail-closed — or the connection through tun0 stalled)');
+      console.log(`\n    exit IP: ${ipLine[1]}  (proxy is ${runtime.host})`);
+      console.log(ipLine[1] === runtime.host ? '    ✓ routes through the proxy' : '    ✗ bypasses the proxy');
     }
   } finally {
     await docker(['rm', '-f', GATEWAY]);
