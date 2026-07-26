@@ -14,7 +14,7 @@ import {
   type DockerClient,
 } from './docker';
 import { proxyGatewayConfigSchema, startProxyGateway, type RunningGateway } from './proxyGateway';
-import { applyEgressPolicy, policyFromEnv } from './egressPolicy';
+import { applyEgressPolicy, policyFromEnv, resolveProxyEndpoints } from './egressPolicy';
 import { assertProxiedEgress } from './egressCheck';
 import { ensurePackageInstalled, type AcquireContext, type AcquiredDevice, type DeviceProvider } from './deviceProvider';
 
@@ -130,6 +130,8 @@ export interface RedroidProviderOptions {
    * the test suite.
    */
   resolveDirectIp?: () => Promise<string | null>;
+  /** Same reason: resolving the proxy host is a DNS query the suite must not make. */
+  lookupHost?: (host: string) => Promise<string[]>;
 }
 
 function containerName(jobId: string): string {
@@ -285,8 +287,8 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       // namespace while nothing is using the network, then prove the pin worked.
       // Doing it after `ensurePackageInstalled` would mean downloading an APK
       // through a route that may not be the proxy's.
-      if (gateway) {
-        await this.pinEgress(gateway, device, context);
+      if (gateway && proxy) {
+        await this.pinEgress(gateway, proxy, device, context);
       }
 
       await ensurePackageInstalled(device, context);
@@ -317,16 +319,34 @@ export class EphemeralRedroidProvider implements DeviceProvider {
    */
   private async pinEgress(
     gateway: RunningGateway,
+    proxy: ProxyRuntimeConfig,
     device: AndroidDevice,
     context: AcquireContext,
   ): Promise<void> {
     const { proxyGateway } = this.options.config;
 
     if (proxyGateway.harden) {
+      // Resolved out here, where a failure can be reported, rather than inside
+      // the gateway's shell. The ACL opens these addresses so that the gateway
+      // can reach its own proxy without depending on a kernel module.
+      const proxyEndpoints = await resolveProxyEndpoints(proxy, this.options.lookupHost);
+
+      if (proxyEndpoints.length === 0) {
+        await context.log.warn(
+          'Could not resolve the proxy host, so the firewall can only recognise the gateway’s ' +
+            'traffic by its fwmark. On a kernel without xt_mark the run will fail the egress check.',
+          { host: proxy.host },
+        );
+      }
+
       await applyEgressPolicy({
         docker: this.docker,
         gatewayName: gateway.name,
-        policy: policyFromEnv(proxyGateway.env, gateway.controlSubnets),
+        policy: policyFromEnv({
+          env: proxyGateway.env,
+          controlSubnets: gateway.controlSubnets,
+          proxyEndpoints,
+        }),
         log: context.log,
         signal: context.signal,
       });

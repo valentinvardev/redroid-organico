@@ -519,16 +519,19 @@ en el contenedor, así que un host que nunca cargó `iptable_mangle` le contesta
 
 ```bash
 sudo modprobe tun
-sudo modprobe iptable_mangle
+sudo modprobe iptable_mangle xt_mark xt_conntrack
 ls -l /dev/net/tun                       # querés que exista
 
 # Que sobrevivan reboots:
-printf 'tun\niptable_mangle\n' | sudo tee /etc/modules-load.d/redroid.conf
+printf 'tun\niptable_mangle\nxt_mark\nxt_conntrack\n' | sudo tee /etc/modules-load.d/redroid.conf
 ```
 
-Sin `iptable_mangle` el job **no falla**: la capa 2 se saltea con un `WARN` en el
-log y quedan la 1 y la 3, que son las que enforcen. Pero perdés defensa en
-profundidad por una línea, así que cargalo.
+Ninguno de los tres de netfilter es obligatorio: cada regla que los necesita es
+best-effort y deja un `WARN` en el log del job. Lo que **no** depende de ningún
+módulo es lo que sostiene la garantía — la ruta al tun, el `REJECT` final, la
+salida del gateway hacia su proxy (que se abre por destino, no por marca) y las
+respuestas de ADB (por `--sport 5555`, sin estado). Cargalos igual: sin ellos
+perdés defensa en profundidad por una línea de shell.
 
 Para confirmar que el kernel sirve:
 

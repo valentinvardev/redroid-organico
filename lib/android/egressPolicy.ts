@@ -47,6 +47,17 @@ export interface EgressPolicy {
   bypassPref: number;
   /** Priority of the catch-all that sends everything else into the tun. */
   tunPref: number;
+  /**
+   * Where the gateway's own upstream connection goes, resolved to addresses.
+   *
+   * This is what lets the ACL recognise that connection without `-m mark`. It
+   * is also narrower than the mark was: the mark permits any packet carrying
+   * it, this permits exactly the proxy endpoint, which is the only place
+   * tun2socks ever dials.
+   */
+  proxyEndpoints: Array<{ address: string; port: number }>;
+  /** ADB's port inside the namespace, allowed out statelessly so replies survive. */
+  adbPort: number;
 }
 
 export const DEFAULT_PREFS = {
@@ -59,19 +70,51 @@ export const DEFAULT_PREFS = {
   tun: 100,
 } as const;
 
-/**
- * Reads the policy off the gateway's environment, so an operator who overrides
- * TABLE or FWMARK does not silently get rules pointing at the defaults.
- */
-export function policyFromEnv(env: Record<string, string>, controlSubnets: string[]): EgressPolicy {
+export interface PolicyInput {
+  /** The gateway's environment, so an override of TABLE or FWMARK is honoured. */
+  env: Record<string, string>;
+  controlSubnets: string[];
+  proxyEndpoints: Array<{ address: string; port: number }>;
+  adbPort?: number;
+}
+
+export function policyFromEnv(input: PolicyInput): EgressPolicy {
   return {
-    table: env.TABLE ?? '0x22b',
-    mark: env.FWMARK ?? '0x22b',
-    tunDevice: env.TUN ?? 'tun0',
-    controlSubnets,
+    table: input.env.TABLE ?? '0x22b',
+    mark: input.env.FWMARK ?? '0x22b',
+    tunDevice: input.env.TUN ?? 'tun0',
+    controlSubnets: input.controlSubnets,
+    proxyEndpoints: input.proxyEndpoints,
+    adbPort: input.adbPort ?? 5555,
     bypassPref: DEFAULT_PREFS.bypass,
     tunPref: DEFAULT_PREFS.tun,
   };
+}
+
+/**
+ * Resolves the proxy's host to the addresses the ACL will open.
+ *
+ * A literal address — which is what most residential providers hand out — comes
+ * straight back. A hostname is resolved here rather than inside the gateway
+ * because busybox's resolver tooling is not guaranteed to be present, and
+ * because a failure needs to reach a job log rather than a shell's stderr.
+ */
+export async function resolveProxyEndpoints(
+  proxy: { host: string; port: number },
+  lookup: (host: string) => Promise<string[]> = defaultLookup,
+): Promise<Array<{ address: string; port: number }>> {
+  const addresses = await (lookup ?? defaultLookup)(proxy.host).catch(() => [] as string[]);
+
+  return addresses.map((address) => ({ address, port: proxy.port }));
+}
+
+async function defaultLookup(host: string): Promise<string[]> {
+  const { lookup } = await import('dns/promises');
+  // v4 only: the gateway runs with IPv6 disabled, so a AAAA record here would
+  // produce a rule for an address family that cannot carry a packet.
+  const results = await lookup(host, { all: true, family: 4 });
+
+  return results.map((entry) => entry.address);
 }
 
 /**
@@ -109,22 +152,42 @@ export function egressPolicyScript(policy: EgressPolicy): string {
     // that still tries to leave another way — this layer only defends against a
     // rule at a priority we did not anticipate. Losing it is worth a warning,
     // not a dead job.
-    `if iptables -t mangle -S >/dev/null 2>&1; then`,
-    `  iptables -t mangle -C OUTPUT ${mangleRule} 2>/dev/null || iptables -t mangle -A OUTPUT ${mangleRule}`,
-    `else`,
-    `  echo "WARN: no mangle table in this kernel, so netd's socket marks are not being cleared." \\`,
-    `       "Run: sudo modprobe iptable_mangle  (and add it to /etc/modules-load.d/)"`,
+    //
+    // The whole thing, table check included, is best-effort for one reason:
+    // `-j MARK` is a separate module again (xt_mark), so the table can exist
+    // and the rule still be unsupported.
+    `if iptables -t mangle -C OUTPUT ${mangleRule} 2>/dev/null || iptables -t mangle -A OUTPUT ${mangleRule} 2>/dev/null; then :; else`,
+    `  echo "WARN: could not clear netd's socket marks — this kernel is missing the mangle table or xt_mark." \\`,
+    `       "Run: sudo modprobe iptable_mangle xt_mark  (and add them to /etc/modules-load.d/)"`,
     `fi`,
 
     // Layer 3 — the ACL. Nothing below this line depends on routing being right.
     `iptables -N ${CHAIN} 2>/dev/null || iptables -F ${CHAIN}`,
     `iptables -A ${CHAIN} -o lo -j ACCEPT`,
     `iptables -A ${CHAIN} -o ${tunDevice} -j ACCEPT`,
-    // Replies to connections opened from outside — ADB above all. Without this
-    // the rule set is correct and the device is unreachable.
-    `iptables -A ${CHAIN} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT`,
-    // The gateway's own upstream socket, the only thing allowed out unproxied.
-    `iptables -A ${CHAIN} -m mark --mark ${mark}/0xffff -j ACCEPT`,
+    // ADB's replies, matched statelessly on the source port so that the control
+    // plane survives a kernel with no conntrack module. Narrow: it permits
+    // packets *from* the ADB listener, which nothing else can produce.
+    `iptables -A ${CHAIN} -p tcp --sport ${policy.adbPort} -j ACCEPT`,
+    // Everything else answering an inbound connection. Best-effort because
+    // xt_conntrack is yet another module, and the rule above already covers the
+    // one connection that must never break.
+    `iptables -A ${CHAIN} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null ||` +
+      ` echo "WARN: no conntrack match available; only ADB replies are permitted back out."`,
+    // The gateway's own upstream connection, by destination.
+    //
+    // This used to be matched on tun2socks' fwmark, which was a mistake: it put
+    // a kernel module (xt_mark) in the path of a rule the whole mechanism
+    // depends on, and a host without it lost its proxy connection rather than
+    // its defence in depth. A destination is module-free and strictly narrower.
+    ...policy.proxyEndpoints.map(
+      (endpoint) =>
+        `iptables -A ${CHAIN} -d ${endpoint.address} -p tcp --dport ${endpoint.port} -j ACCEPT`,
+    ),
+    // Kept as well, when the module is there: it covers a proxy that resolves
+    // to an address we did not pin, e.g. after tun2socks reconnects.
+    `iptables -A ${CHAIN} -m mark --mark ${mark}/0xffff -j ACCEPT 2>/dev/null ||` +
+      ` echo "WARN: no mark match available; only the resolved proxy addresses are reachable."`,
     ...policy.controlSubnets.map((subnet) => `iptables -A ${CHAIN} -d ${subnet} -j ACCEPT`),
     // REJECT, not DROP: a leak should fail in milliseconds and be visible in a
     // log, not hang for two minutes looking like a slow network. The fallback

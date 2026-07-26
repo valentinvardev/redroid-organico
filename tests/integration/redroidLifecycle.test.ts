@@ -14,7 +14,7 @@ import { EphemeralRedroidProvider, redroidConfigSchema } from '@/lib/android/red
 import { reapAndroidContainers } from '@/lib/android/reaper';
 import { JobStatus } from '@prisma/client';
 import type { AcquireContext } from '@/lib/android/deviceProvider';
-import { egressPolicyScript, policyFromEnv } from '@/lib/android/egressPolicy';
+import { egressPolicyScript, policyFromEnv, resolveProxyEndpoints } from '@/lib/android/egressPolicy';
 import { directEgressIp, resetDirectEgressCache } from '@/lib/android/egressCheck';
 import type { ProxyRuntimeConfig } from '@/lib/proxy/config';
 import { FakeDocker, type FakeDockerOptions } from '../helpers/fakeDocker';
@@ -75,8 +75,9 @@ function provider(
     },
     createDevice: () => device,
     // Never the real network: the check would otherwise make an outbound
-    // request from the test suite.
+    // request, and the policy a DNS query, from the test suite.
     resolveDirectIp: async () => (options.directIp === undefined ? '198.51.100.1' : options.directIp),
+    lookupHost: async () => ['78.143.233.210'],
   });
 
   return { subject, docker, device, connects, disconnects };
@@ -494,15 +495,21 @@ describe('EphemeralRedroidProvider with a proxy', () => {
 });
 
 describe('egress policy script', () => {
+  const upstream = [{ address: '78.143.233.210', port: 12324 }];
+
+  /** The shape every case here starts from; overrides are the point of each test. */
+  const policy = (overrides: Partial<Parameters<typeof policyFromEnv>[0]> = {}) =>
+    policyFromEnv({ env: {}, controlSubnets: ['172.30.0.0/16'], proxyEndpoints: upstream, ...overrides });
+
   it('follows the gateway when the routing table, mark or tun name are overridden', () => {
     // The script has to describe the namespace the gateway actually built. Rules
     // pointing at the defaults would apply cleanly and route nothing.
-    const policy = policyFromEnv(
-      { TABLE: '0x1f4', FWMARK: '0x1f4', TUN: 'redroid0' },
-      ['10.10.0.0/24', '10.20.0.0/24'],
+    const script = egressPolicyScript(
+      policy({
+        env: { TABLE: '0x1f4', FWMARK: '0x1f4', TUN: 'redroid0' },
+        controlSubnets: ['10.10.0.0/24', '10.20.0.0/24'],
+      }),
     );
-
-    const script = egressPolicyScript(policy);
 
     assert.match(script, /ip rule add fwmark 0x1f4 lookup main pref 90/);
     assert.match(script, /ip rule add lookup 0x1f4 pref 100/);
@@ -513,7 +520,7 @@ describe('egress policy script', () => {
   });
 
   it('guards every mutation so a retried acquisition does not stack a second copy', () => {
-    const script = egressPolicyScript(policyFromEnv({}, ['172.30.0.0/16']));
+    const script = egressPolicyScript(policy());
 
     for (const line of script.split('\n')) {
       if (line.startsWith('ip rule add')) {
@@ -533,25 +540,46 @@ describe('egress policy script', () => {
     assert.match(script, /iptables -C OUTPUT -j REDROID_EGRESS 2>\/dev\/null \|\| iptables -I OUTPUT 1/);
   });
 
-  it('survives a kernel without the mangle table instead of failing the job', () => {
-    // Netfilter tables belong to the host kernel, and Docker only ever loads
-    // filter and nat. A host that never modprobed iptable_mangle answers "Table
-    // does not exist" — which used to abort the whole script under `set -eu`,
-    // taking the ACL down with it and killing every proxied job.
-    const script = egressPolicyScript(policyFromEnv({}, ['172.30.0.0/16']));
+  it('survives a kernel missing the mangle table or xt_mark instead of failing the job', () => {
+    // Netfilter tables and matches belong to the host kernel, and Docker only
+    // ever loads what it needs itself. A host that never modprobed
+    // iptable_mangle answers "Table does not exist"; one without xt_mark has
+    // the table and still rejects the rule. Under `set -eu` either used to
+    // abort the whole script, taking the ACL down and killing every job.
+    const script = egressPolicyScript(policy());
 
-    assert.match(script, /if iptables -t mangle -S >\/dev\/null 2>&1; then/);
-    assert.match(script, /echo "WARN: no mangle table/);
-    assert.match(script, /modprobe iptable_mangle/);
+    assert.match(script, /iptables -t mangle -A OUTPUT .* 2>\/dev\/null; then :; else/);
+    assert.match(script, /echo "WARN: could not clear netd's socket marks/);
+    assert.match(script, /modprobe iptable_mangle xt_mark/);
+  });
 
-    // The layers that actually enforce must stay outside the guard.
-    const guarded = script.slice(script.indexOf('if iptables -t mangle'), script.indexOf('fi'));
-    assert.equal(guarded.includes('REDROID_EGRESS'), false, 'the ACL must not depend on mangle');
-    assert.equal(guarded.includes('ip rule add'), false, 'the routing rules must not depend on mangle');
+  it('lets the gateway reach its proxy without depending on any kernel module', () => {
+    // The regression that motivated this: matching the gateway's own traffic by
+    // fwmark put xt_mark in the path of a rule the mechanism depends on, so a
+    // host without that module lost its proxy connection — not just its defence
+    // in depth. A destination needs no module and is strictly narrower.
+    const script = egressPolicyScript(policy());
+
+    assert.match(script, /-A REDROID_EGRESS -d 78\.143\.233\.210 -p tcp --dport 12324 -j ACCEPT/);
+
+    const markRule = script.split('\n').find((line) => line.includes('-m mark --mark'));
+    assert.ok(markRule?.includes('|| echo "WARN:'), 'the mark rule must be optional now');
+  });
+
+  it('keeps ADB answering on a kernel with no conntrack match', () => {
+    const script = egressPolicyScript(policy({ controlSubnets: [] }));
+
+    // Stateless and narrow: packets *from* the ADB listener, which nothing else
+    // can produce. Without it, a missing xt_conntrack means an unreachable
+    // device and a job that fails looking like a boot problem.
+    assert.match(script, /-A REDROID_EGRESS -p tcp --sport 5555 -j ACCEPT/);
+
+    const conntrackRule = script.split('\n').find((line) => line.includes('--ctstate'));
+    assert.ok(conntrackRule?.includes('|| echo "WARN:'), 'conntrack must be optional');
   });
 
   it('still denies when the kernel has no REJECT target', () => {
-    const script = egressPolicyScript(policyFromEnv({}, []));
+    const script = egressPolicyScript(policy({ controlSubnets: [] }));
 
     assert.match(
       script,
@@ -560,13 +588,33 @@ describe('egress policy script', () => {
     );
   });
 
-  it('opens nothing when there is no control network to name', () => {
-    const script = egressPolicyScript(policyFromEnv({}, []));
+  it('opens no subnet when there is no control network to name', () => {
+    const script = egressPolicyScript(policy({ controlSubnets: [] }));
 
-    assert.equal(/-d \S+ -j ACCEPT/.test(script), false);
-    // The device is still reachable: replies to an inbound connection are what
-    // ADB needs, and that rule does not depend on knowing any subnet.
-    assert.match(script, /--ctstate ESTABLISHED,RELATED -j ACCEPT/);
+    assert.equal(/-d \S+\/\d+ -j ACCEPT/.test(script), false, 'no CIDR may be opened');
+    // The device stays reachable regardless: the ADB rule needs no subnet.
+    assert.match(script, /--sport 5555 -j ACCEPT/);
+  });
+
+  it('resolves a proxy hostname, and reports the addresses it opened', async () => {
+    const endpoints = await resolveProxyEndpoints({ host: 'gate.example.com', port: 1080 }, async () => [
+      '203.0.113.7',
+      '203.0.113.8',
+    ]);
+
+    assert.deepEqual(endpoints, [
+      { address: '203.0.113.7', port: 1080 },
+      { address: '203.0.113.8', port: 1080 },
+    ]);
+
+    // A provider that stops resolving must not throw here: the run continues on
+    // the fwmark rule and the egress check has the last word.
+    assert.deepEqual(
+      await resolveProxyEndpoints({ host: 'nope.invalid', port: 1080 }, async () => {
+        throw new Error('ENOTFOUND');
+      }),
+      [],
+    );
   });
 });
 
