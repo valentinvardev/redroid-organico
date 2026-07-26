@@ -368,7 +368,7 @@ describe('EphemeralRedroidProvider with a proxy', () => {
 
     // Layer 1: below netd's band, which starts at 10000. The bypass has to come
     // first or the gateway's own connection to the proxy loops into the tun.
-    assert.match(script, /ip rule add fwmark 0x22b lookup main pref 90/);
+    assert.match(script, /ip rule add fwmark 0x22b lookup "\$BYPASS_TABLE" pref 90/);
     assert.match(script, /ip rule add lookup 0x22b pref 100/);
 
     // Layer 2: netd's per-socket mark cleared, which also forces a re-route.
@@ -494,6 +494,18 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     assert.equal(docker.containers.size, 0);
   });
 
+  it('carries the namespace’s state in the error when nothing at all answers', async () => {
+    // The containers are destroyed in a `finally`, so anything not captured
+    // here is gone by the time someone reads the failure. Counters on the ACL
+    // are what separate "the policy blocked it" from "the proxy is down".
+    const docker = new FakeDocker({
+      execOutput: { sh: '== egress ACL counters ==\n 12 720 REJECT all -- * *' },
+    });
+    const { subject } = provider({ docker, proxy, device: { egressTools: [] } });
+
+    await assert.rejects(subject.acquire(context()), /egress ACL counters[\s\S]*REJECT/);
+  });
+
   it('does not fail a run when the worker cannot tell what its own address is', async () => {
     // An air-gapped worker cannot answer the question, and refusing to publish
     // over an unanswerable question would ground the fleet.
@@ -553,8 +565,9 @@ describe('egress policy script', () => {
       }),
     );
 
-    assert.match(script, /ip rule add fwmark 0x1f4 lookup main pref 90/);
+    assert.match(script, /ip rule add fwmark 0x1f4 lookup "\$BYPASS_TABLE" pref 90/);
     assert.match(script, /ip rule add lookup 0x1f4 pref 100/);
+    assert.match(script, /-v tun="redroid0"/, 'the tun to exclude has to follow the gateway too');
     assert.match(script, /-A REDROID_EGRESS -o redroid0 -j ACCEPT/);
     assert.match(script, /-d 10\.10\.0\.0\/24 -j ACCEPT/);
     assert.match(script, /-d 10\.20\.0\.0\/24 -j ACCEPT/);
@@ -614,6 +627,23 @@ describe('egress policy script', () => {
 
     assert.match(script, /-t mangle -A OUTPUT .* 2>\/dev\/null; then :; else/);
     assert.match(script, /echo "WARN: could not clear netd's socket marks/);
+  });
+
+  it('sends the gateway’s own traffic to a table that has a route, not to main', () => {
+    // The regression this guards: on Android, netd moves the physical interface
+    // into a table of its own and leaves main empty. A bypass pointing at main
+    // finds nothing, falls through every rule netd owns — none match a non-zero
+    // mark — and dies on its `32000: from all unreachable`. The gateway loses
+    // the connection to its own proxy and the tunnel relays nothing.
+    const script = egressPolicyScript(policy());
+
+    assert.match(script, /BYPASS_TABLE=\$\(ip route show table all/);
+    assert.match(script, /\$1=="default" && index\(\$0, "dev " tun\)==0/, 'the tun is not a way out');
+    assert.match(script, /ip rule add fwmark 0x22b lookup "\$BYPASS_TABLE" pref 90/);
+
+    // main stays as a second chance, for a namespace nobody rearranged.
+    assert.match(script, /ip rule add fwmark 0x22b lookup main pref 91/);
+    assert.match(script, /ip rule del pref 91/, 'and it has to be deletable on a re-run');
   });
 
   it('lets the gateway reach its proxy without depending on any kernel module', () => {

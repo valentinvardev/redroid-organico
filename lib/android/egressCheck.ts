@@ -152,6 +152,38 @@ export async function gatewayEgressIp(
   return firstAddress(stdout);
 }
 
+/**
+ * The state of the namespace at the moment the check gave up.
+ *
+ * Attached to the failure rather than left for someone to reproduce, because by
+ * the time anyone reads the error the containers are gone — `release()` runs in
+ * a `finally` — and a question like "did the firewall eat the gateway's own
+ * packets" is answerable in one line of counters or not at all.
+ */
+export async function gatewayDiagnostics(
+  docker: DockerClient,
+  gatewayName: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const script = [
+    'IPT=iptables',
+    'for c in iptables-nft iptables-legacy iptables; do',
+    '  if "$c" -S >/dev/null 2>&1; then IPT="$c"; break; fi',
+    'done',
+    'echo "== ip rule =="; ip rule show 2>&1',
+    'echo "== routes (all tables) =="; ip route show table all 2>&1 | head -40',
+    // Counters are the point: a non-zero REJECT means the policy is what
+    // stopped the traffic, and everything else is a red herring.
+    'echo "== egress ACL counters =="; "$IPT" -nvL REDROID_EGRESS 2>&1',
+  ].join('\n');
+
+  const output = await docker.exec(gatewayName, ['sh', '-c', script], { signal }).catch((error) => {
+    return `(diagnostics unavailable: ${error instanceof Error ? error.message : String(error)})`;
+  });
+
+  return output.trim().slice(0, 4_000);
+}
+
 let cachedDirectIp: { url: string; value: string | null } | undefined;
 
 /**
@@ -214,11 +246,23 @@ export async function assertProxiedEgress(options: EgressCheckOptions): Promise<
     const fromGateway = await gatewayEgressIp(docker, gatewayName, url, timeoutSeconds, signal);
     const detail = error instanceof Error ? error.message : String(error);
 
+    if (fromGateway) {
+      throw new EgressUnreachableError(
+        `The device cannot reach ${url} but its gateway can (${fromGateway}), so the proxy works and ` +
+          `Android is not using it — check the routing rules inside ${gatewayName}. ${detail}`,
+        { cause: error },
+      );
+    }
+
+    // Neither one answered, which is the case that cannot be diagnosed from a
+    // message alone: the proxy, the routing and this policy all look the same
+    // from here. Take the namespace's state with us — the containers are about
+    // to be destroyed.
+    const state = await gatewayDiagnostics(docker, gatewayName, signal);
+
     throw new EgressUnreachableError(
-      fromGateway
-        ? `The device cannot reach ${url} but its gateway can (${fromGateway}), so the proxy works and ` +
-          `Android is not using it — check the routing rules inside ${gatewayName}. ${detail}`
-        : `Neither the device nor its gateway can reach ${url}: the proxy is not relaying traffic. ${detail}`,
+      `Neither the device nor its gateway can reach ${url}: nothing is relaying traffic. ${detail}\n` +
+        `--- inside ${gatewayName} ---\n${state}`,
       { cause: error },
     );
   }

@@ -159,11 +159,31 @@ export function egressPolicyScript(policy: EgressPolicy): string {
     'echo "INFO: iptables backend: $IPT"',
 
     // Layer 1 — routing priority.
+    //
+    // The bypass has to point at a table that actually holds a route to the
+    // outside, and on Android that is not `main`. netd moves the physical
+    // interface into a table of its own and leaves main empty, so a packet
+    // carrying tun2socks' mark finds nothing there, falls through every rule
+    // netd owns — none of which match a non-zero mark — and lands on its
+    // `32000: from all unreachable`. The gateway loses the connection to its
+    // own proxy, and the symptom is a tunnel that relays nothing.
+    //
+    // So the table is discovered: the first default route that is not the tun's.
+    `BYPASS_TABLE=$(ip route show table all 2>/dev/null | awk -v tun="${tunDevice}" '` +
+      `$1=="default" && index($0, "dev " tun)==0 { t="main"; ` +
+      `for (i=1;i<=NF;i++) if ($i=="table") t=$(i+1); print t; exit }')`,
+    'BYPASS_TABLE=${BYPASS_TABLE:-main}',
+    `echo "INFO: bypass table for the gateway's own traffic: $BYPASS_TABLE"`,
+
     `ip rule del pref ${bypassPref} 2>/dev/null || true`,
+    `ip rule del pref ${bypassPref + 1} 2>/dev/null || true`,
     `ip rule del pref ${tunPref} 2>/dev/null || true`,
     // First, or the gateway's own connection to the proxy is routed into the
     // tun it is serving and the whole thing deadlocks.
-    `ip rule add fwmark ${mark} lookup main pref ${bypassPref}`,
+    `ip rule add fwmark ${mark} lookup "$BYPASS_TABLE" pref ${bypassPref}`,
+    // main as a second chance, for a container that is not Android and whose
+    // routes never moved anywhere.
+    `ip rule add fwmark ${mark} lookup main pref ${bypassPref + 1}`,
     `ip rule add lookup ${table} pref ${tunPref}`,
 
     // Layer 2 — clear netd's per-socket mark. Changing the mark in mangle
