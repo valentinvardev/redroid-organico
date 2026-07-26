@@ -82,12 +82,21 @@ Sin Docker: alcanza con un PostgreSQL y un Redis accesibles y apuntar
 ### Todo en contenedores
 
 ```bash
-docker compose up --build
+docker compose --profile app up --build
 ```
 
 Levanta Postgres, Redis, corre las migraciones y arranca web y worker. Web y
 worker comparten el volumen `media` porque con `STORAGE_DRIVER=local` el worker
 lee los archivos que escribió la web; con `s3` ese acoplamiento desaparece.
+
+El perfil `app` existe para que un `docker compose up` pelado no pueda levantar
+una segunda copia de la aplicación. **Web y worker van en containers o en el
+host, nunca mezclados**: dentro del contenedor `STORAGE_LOCAL_DIR` resuelve a
+`/app/.storage` y no ve los archivos que escribió un panel corriendo en el host,
+así que con dos workers repartiéndose la misma cola el resultado de un job
+depende de cuál lo haya tomado.
+
+Para correrlos en el host con systemd, ver [deploy/](deploy/).
 
 ## Comandos
 

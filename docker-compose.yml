@@ -47,7 +47,17 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Behind a profile so a bare `docker compose up` cannot start a second copy of
+  # the app. Running these in containers while another copy runs on the host —
+  # under systemd, say — gives two workers competing for one queue with
+  # different configuration: this one resolves STORAGE_LOCAL_DIR to /app/.storage
+  # and cannot see media the host wrote, so whether a job works depends on which
+  # worker happened to pick it up.
+  #
+  #   docker compose --profile app up --build       everything in containers
+  #   docker compose --profile android up ...       datastores + device stack only
   web:
+    profiles: ["app"]
     build:
       context: .
       target: runtime
@@ -74,6 +84,7 @@ services:
       start_period: 30s
 
   worker:
+    profiles: ["app"]
     build:
       context: .
       target: runtime
