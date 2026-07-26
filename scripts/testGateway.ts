@@ -57,6 +57,28 @@ async function main(): Promise<void> {
   console.log(`\nGateway diagnostic for: ${redactProxyUrl(runtime)}\n`);
 
   try {
+    // Bisection: the proxy straight from the host, no gateway involved. If this
+    // works and the gateway does not, the routing is at fault; if this fails
+    // too, the credentials are.
+    console.log('==> proxy from the host directly (are the credentials good?)');
+    const hostProbe = await docker([
+      'run', '--rm', PROBE_IMAGE,
+      '-s', '--max-time', '20', '-x', url, 'https://ipwho.is/',
+    ]);
+    const hostBody = hostProbe.stdout.trim();
+    if (hostBody) {
+      try {
+        const info = JSON.parse(hostBody) as { ip?: string; country?: string; city?: string };
+        console.log(`    ✓ proxy works — exits from ${info.ip} (${[info.city, info.country].filter(Boolean).join(', ')})`);
+      } catch {
+        console.log(`    raw: ${hostBody}`);
+      }
+    } else {
+      console.log(`    ✗ the proxy did not answer from the host: ${hostProbe.stderr.trim() || '(empty)'}`);
+      console.log('    → the credentials or the proxy itself are the problem, not the routing.');
+    }
+    console.log('');
+
     console.log('==> Starting the gateway (same flags as a real job)');
     const start = await docker([
       'run', '-d', '--name', GATEWAY,
