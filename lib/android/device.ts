@@ -10,6 +10,7 @@ import {
   adbPushFile,
   adbRemoveFile,
   adbShell,
+  adbShellProbe,
   adbStartActivity,
   type AdbTarget,
 } from './adb';
@@ -81,8 +82,57 @@ export class AdbDevice implements AndroidDevice {
     );
   }
 
+  /**
+   * Waits until the directory actually accepts a new file.
+   *
+   * `sys.boot_completed` and a stopped boot animation do not cover external
+   * storage: /sdcard is a symlink to /storage/self/primary, whose FUSE mount is
+   * prepared after boot finishes. Push into that window and adb transfers the
+   * bytes and then fails to create the file — "remote couldn't create file:
+   * Operation not permitted" — on a directory that works perfectly a minute
+   * later.
+   *
+   * Tests the capability rather than a property that correlates with it: the
+   * question is whether a file can be created here, so that is what it asks.
+   */
+  private async waitUntilWritable(remoteDir: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    const probe = `${remoteDir}/.redroid-writable`;
+    const deadline = Date.now() + timeoutMs;
+    let lastOutput = '';
+
+    for (;;) {
+      if (signal?.aborted) {
+        throw new Error(`Cancelled while waiting for ${remoteDir} to become writable`);
+      }
+
+      const result = await adbShellProbe(
+        this.adbCommand,
+        this.target,
+        ['sh', '-c', `touch '${probe}' && rm -f '${probe}' && echo writable`],
+        signal,
+      );
+
+      if (result.code === 0 && result.stdout.includes('writable')) {
+        return;
+      }
+
+      lastOutput = `${result.stdout} ${result.stderr}`.trim();
+
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `${remoteDir} never became writable within ${timeoutMs}ms` + (lastOutput ? `: ${lastOutput}` : ''),
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
+
   async pushMedia(localPath: string, remotePath: string, signal?: AbortSignal): Promise<number | null> {
-    await adbMkdir(this.adbCommand, this.target, remoteDirectory(remotePath), signal);
+    const dir = remoteDirectory(remotePath);
+
+    await adbMkdir(this.adbCommand, this.target, dir, signal);
+    await this.waitUntilWritable(dir, 120_000, signal);
 
     // Android 11+ serves /sdcard through FUSE, and overwriting a file created
     // by a different owner fails with "remote couldn't create file: Operation
