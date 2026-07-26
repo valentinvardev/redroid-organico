@@ -1032,3 +1032,32 @@ input[type='file']::file-selector-button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* --- New-account dialog ----------------------------------------------------- */
+
+.account-form-panel {
+  width: min(760px, 100%);
+}
+
+.account-config {
+  min-height: 340px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+
+.account-config-error {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}

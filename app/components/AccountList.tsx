@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { OnboardingDialog } from './OnboardingDialog';
 import { ProxyDialog, type ProxySummary } from './ProxyDialog';
+import { NewAccountDialog } from './NewAccountDialog';
 
 interface Account {
   id: string;
@@ -11,6 +12,7 @@ interface Account {
   status: string;
   sessionState: 'NONE' | 'ONBOARDING' | 'VERIFIED' | 'EXPIRED';
   sessionVerifiedAt: string | null;
+  hasCredentials: boolean;
   proxyId: string | null;
   proxy: ProxySummary | null;
 }
@@ -26,6 +28,7 @@ export function AccountList() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [linking, setLinking] = useState<Account | null>(null);
   const [routing, setRouting] = useState<Account | null>(null);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -52,14 +55,15 @@ export function AccountList() {
     <section className="card accounts">
       <header className="queue-header">
         <h2>Accounts</h2>
+        <button type="button" className="primary" onClick={() => setCreating(true)}>
+          New account
+        </button>
       </header>
 
       {error ? <p className="error">{error}</p> : null}
 
       {accounts.length === 0 ? (
-        <p className="hint">
-          No accounts yet. Add one with <code>npm run account:add</code>.
-        </p>
+        <p className="hint">No accounts yet. Create one to get started.</p>
       ) : (
         <ul className="account-list">
           {accounts.map((account) => {
@@ -142,6 +146,14 @@ export function AccountList() {
           currentProxyId={routing.proxyId}
           onSaved={() => void load()}
           onClose={() => setRouting(null)}
+        />
+      ) : null}
+
+      {creating ? (
+        <NewAccountDialog
+          accounts={accounts.map((a) => ({ id: a.id, name: a.name, hasCredentials: a.hasCredentials }))}
+          onCreated={() => void load()}
+          onClose={() => setCreating(false)}
         />
       ) : null}
     </section>
