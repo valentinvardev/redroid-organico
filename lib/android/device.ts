@@ -83,6 +83,14 @@ export class AdbDevice implements AndroidDevice {
 
   async pushMedia(localPath: string, remotePath: string, signal?: AbortSignal): Promise<number | null> {
     await adbMkdir(this.adbCommand, this.target, remoteDirectory(remotePath), signal);
+
+    // Android 11+ serves /sdcard through FUSE, and overwriting a file created
+    // by a different owner fails with "remote couldn't create file: Operation
+    // not permitted". A run killed before its cleanup leaves exactly that, so
+    // every later run on the same session volume would fail on a path that
+    // works fine when empty.
+    await adbRemoveFile(this.adbCommand, this.target, remotePath, signal).catch(() => undefined);
+
     await adbPushFile(this.adbCommand, this.target, localPath, remotePath, signal);
     return adbFileSize(this.adbCommand, this.target, remotePath, signal);
   }
