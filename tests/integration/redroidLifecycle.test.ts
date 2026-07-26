@@ -649,6 +649,35 @@ describe('egress policy script', () => {
     assert.match(script, /ip rule del pref 91/, 'and it has to be deletable on a re-run');
   });
 
+  it('keeps directly connected subnets out of the tun, or ADB dies with them', () => {
+    // The tun's table holds only the tun's own routes: tun2socks does not copy
+    // what was there. So the catch-all matches its default even for a
+    // neighbour on the bridge, and the ADB connection — which lives on exactly
+    // such a subnet — gets routed through a residential proxy. The device stops
+    // answering and every probe reads as "no network", which is the same
+    // symptom as the bug this whole mechanism exists to fix.
+    const script = egressPolicyScript(policy());
+
+    assert.match(script, /ip rule add to "\$net" lookup "\$BYPASS_TABLE" pref 95/);
+    assert.match(script, /while ip rule del pref 95 2>\/dev\/null; do :; done/, 'and re-runnable');
+
+    // Above the catch-all or it does nothing at all.
+    assert.ok(
+      script.indexOf('pref 95') < script.indexOf(`ip rule add lookup 0x22b pref 100`),
+      'the local-subnet rules have to be evaluated before everything goes to the tun',
+    );
+  });
+
+  it('feeds `ip rule` only real prefixes', () => {
+    // `scope link` also matches the broadcast entries in the local table, whose
+    // first field is the word `broadcast`. Passing that to `ip rule add to`
+    // fails, and under `set -eu` it took the script down three lines before the
+    // rule that actually routes anything.
+    const script = egressPolicyScript(policy());
+
+    assert.match(script, /\$1 ~ \/\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\\\/\[0-9\]\+\$\//);
+  });
+
   it('lets the gateway reach its proxy without depending on any kernel module', () => {
     // The regression that motivated this: matching the gateway's own traffic by
     // fwmark put xt_mark in the path of a rule the mechanism depends on, so a

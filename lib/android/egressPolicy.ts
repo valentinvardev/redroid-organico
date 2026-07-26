@@ -126,6 +126,9 @@ async function defaultLookup(host: string): Promise<string[]> {
  */
 export function egressPolicyScript(policy: EgressPolicy): string {
   const { table, mark, tunDevice, bypassPref, tunPref } = policy;
+  // Between the bypass and the catch-all: local subnets are neither the
+  // gateway's upstream nor something to proxy.
+  const localPref = tunPref - 5;
   const mangleRule = `-m mark ! --mark ${mark}/0xffff -j MARK --set-xmark 0x0/0xffffffff`;
   // Every rule goes through the backend picked at the top of the script.
   const ipt = '"$IPT"';
@@ -184,6 +187,26 @@ export function egressPolicyScript(policy: EgressPolicy): string {
     // main as a second chance, for a container that is not Android and whose
     // routes never moved anywhere.
     `ip rule add fwmark ${mark} lookup main pref ${bypassPref + 1}`,
+
+    // Directly connected subnets, before the catch-all.
+    //
+    // The tun's table holds only the tun's own routes — tun2socks does not copy
+    // the ones that were there — so `lookup ${table}` matches its default even
+    // for a neighbour on the bridge, and the packet goes looking for the
+    // machine next door through a residential proxy. ADB lives on exactly such
+    // a subnet, which turns pinning the namespace into cutting the control
+    // plane: the device stops answering and every probe reads as "no network".
+    `while ip rule del pref ${localPref} 2>/dev/null; do :; done`,
+    // Only real prefixes: `scope link` also matches the broadcast entries in
+    // the local table, whose first field is the word `broadcast`, and feeding
+    // that to `ip rule add to` kills the script three lines before the rule
+    // that matters.
+    `for net in $(ip -o -4 route show table all scope link 2>/dev/null |` +
+      ` awk -v tun="${tunDevice}" '$1 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+\\/[0-9]+$/ &&` +
+      ` index($0, "dev " tun)==0 {print $1}' | sort -u); do`,
+    `  ip rule add to "$net" lookup "$BYPASS_TABLE" pref ${localPref}`,
+    `done`,
+
     `ip rule add lookup ${table} pref ${tunPref}`,
 
     // Layer 2 — clear netd's per-socket mark. Changing the mark in mangle
