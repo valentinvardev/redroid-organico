@@ -510,28 +510,36 @@ El provider monta ese path dentro del contenedor. Se configura con
 `binderfsPath` (default `/dev/binderfs`, `null` para deshabilitarlo en un host
 que sí exponga `/dev/binder`).
 
-**/dev/net/tun y iptable_mangle.** Los dos sólo hacen falta si vas a usar
-proxies. El gateway crea su tun device desde adentro del contenedor y sin ese
-device no arranca; y las tablas de netfilter viven en el kernel del **host**, no
-en el contenedor, así que un host que nunca cargó `iptable_mangle` le contesta
-`Table does not exist` por más NET_ADMIN que tenga. Docker sólo carga `filter` y
-`nat` para lo suyo.
+**/dev/net/tun.** Sólo hace falta si vas a usar proxies: el gateway crea su tun
+device desde adentro del contenedor y sin ese device no arranca.
 
 ```bash
 sudo modprobe tun
-sudo modprobe iptable_mangle xt_mark xt_conntrack
-ls -l /dev/net/tun                       # querés que exista
-
-# Que sobrevivan reboots:
-printf 'tun\niptable_mangle\nxt_mark\nxt_conntrack\n' | sudo tee /etc/modules-load.d/redroid.conf
+ls -l /dev/net/tun                                   # querés que exista
+echo tun | sudo tee /etc/modules-load.d/redroid.conf # que sobreviva reboots
 ```
 
-Ninguno de los tres de netfilter es obligatorio: cada regla que los necesita es
-best-effort y deja un `WARN` en el log del job. Lo que **no** depende de ningún
-módulo es lo que sostiene la garantía — la ruta al tun, el `REJECT` final, la
-salida del gateway hacia su proxy (que se abre por destino, no por marca) y las
-respuestas de ADB (por `--sport 5555`, sin estado). Cargalos igual: sin ellos
-perdés defensa en profundidad por una línea de shell.
+**Los módulos legacy de netfilter, en cambio, no los cargues.** La imagen del
+gateway apunta `iptables` al binario *legacy*, y en un host con nftables
+—Ubuntu 24.04 en adelante— eso contesta `Table does not exist` para `mangle`,
+después para `filter`, y no se termina más. Perseguirlo con
+`modprobe iptable_mangle`, `xt_mark`, `iptable_filter` es emular a mano, de a un
+módulo por vez, un backend que el kernel ya tiene.
+
+El script elige el backend que el kernel conteste —`iptables-nft` primero,
+`iptables-legacy` después— y deja constancia en el log del job:
+
+```
+[debug] INFO: iptables backend: iptables-nft
+```
+
+Si ninguno anda, la adquisición falla en vez de seguir: sin firewall el
+dispositivo correría sin filtro, que es justo lo que esto viene a evitar. Y si
+el backend anda pero le falta alguna pieza (la tabla `mangle`, el match `mark`,
+`conntrack`), esa regla se saltea con un `WARN` y el resto queda igual: lo que
+sostiene la garantía no depende de ningún módulo — la ruta al tun, el `REJECT`
+final, la salida del gateway hacia su proxy (abierta por destino, no por marca)
+y las respuestas de ADB (por `--sport 5555`, sin estado).
 
 Para confirmar que el kernel sirve:
 

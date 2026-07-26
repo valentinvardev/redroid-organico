@@ -127,9 +127,36 @@ async function defaultLookup(host: string): Promise<string[]> {
 export function egressPolicyScript(policy: EgressPolicy): string {
   const { table, mark, tunDevice, bypassPref, tunPref } = policy;
   const mangleRule = `-m mark ! --mark ${mark}/0xffff -j MARK --set-xmark 0x0/0xffffffff`;
+  // Every rule goes through the backend picked at the top of the script.
+  const ipt = '"$IPT"';
 
   return [
     'set -eu',
+
+    // Pick an iptables that this kernel actually answers.
+    //
+    // The image symlinks `iptables` to the legacy binary, and a modern host —
+    // Ubuntu 24.04 on — runs nftables, where every legacy table reads as "Table
+    // does not exist". Chasing that with `modprobe iptable_filter`,
+    // `iptable_mangle`, `xt_mark` … is loading one legacy module at a time to
+    // emulate a backend the kernel already provides.
+    //
+    // nft first because it is where a modern kernel keeps its rules. Either
+    // backend is enforced regardless — both register their own netfilter hooks,
+    // and a REJECT in one applies whatever the other holds.
+    'IPT=""',
+    'for candidate in iptables-nft iptables-legacy iptables; do',
+    '  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -S >/dev/null 2>&1; then',
+    '    IPT="$candidate"',
+    '    break',
+    '  fi',
+    'done',
+    'if [ -z "$IPT" ]; then',
+    '  echo "ERROR: no iptables backend in this container can reach the filter table," \\',
+    '       "so the egress firewall cannot be built and the device would run unfiltered." >&2',
+    '  exit 1',
+    'fi',
+    'echo "INFO: iptables backend: $IPT"',
 
     // Layer 1 — routing priority.
     `ip rule del pref ${bypassPref} 2>/dev/null || true`,
@@ -156,23 +183,22 @@ export function egressPolicyScript(policy: EgressPolicy): string {
     // The whole thing, table check included, is best-effort for one reason:
     // `-j MARK` is a separate module again (xt_mark), so the table can exist
     // and the rule still be unsupported.
-    `if iptables -t mangle -C OUTPUT ${mangleRule} 2>/dev/null || iptables -t mangle -A OUTPUT ${mangleRule} 2>/dev/null; then :; else`,
-    `  echo "WARN: could not clear netd's socket marks — this kernel is missing the mangle table or xt_mark." \\`,
-    `       "Run: sudo modprobe iptable_mangle xt_mark  (and add them to /etc/modules-load.d/)"`,
+    `if ${ipt} -t mangle -C OUTPUT ${mangleRule} 2>/dev/null || ${ipt} -t mangle -A OUTPUT ${mangleRule} 2>/dev/null; then :; else`,
+    `  echo "WARN: could not clear netd's socket marks with $IPT — no mangle table or no MARK target."`,
     `fi`,
 
     // Layer 3 — the ACL. Nothing below this line depends on routing being right.
-    `iptables -N ${CHAIN} 2>/dev/null || iptables -F ${CHAIN}`,
-    `iptables -A ${CHAIN} -o lo -j ACCEPT`,
-    `iptables -A ${CHAIN} -o ${tunDevice} -j ACCEPT`,
+    `${ipt} -N ${CHAIN} 2>/dev/null || ${ipt} -F ${CHAIN}`,
+    `${ipt} -A ${CHAIN} -o lo -j ACCEPT`,
+    `${ipt} -A ${CHAIN} -o ${tunDevice} -j ACCEPT`,
     // ADB's replies, matched statelessly on the source port so that the control
     // plane survives a kernel with no conntrack module. Narrow: it permits
     // packets *from* the ADB listener, which nothing else can produce.
-    `iptables -A ${CHAIN} -p tcp --sport ${policy.adbPort} -j ACCEPT`,
+    `${ipt} -A ${CHAIN} -p tcp --sport ${policy.adbPort} -j ACCEPT`,
     // Everything else answering an inbound connection. Best-effort because
     // xt_conntrack is yet another module, and the rule above already covers the
     // one connection that must never break.
-    `iptables -A ${CHAIN} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null ||` +
+    `${ipt} -A ${CHAIN} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null ||` +
       ` echo "WARN: no conntrack match available; only ADB replies are permitted back out."`,
     // The gateway's own upstream connection, by destination.
     //
@@ -181,21 +207,20 @@ export function egressPolicyScript(policy: EgressPolicy): string {
     // depends on, and a host without it lost its proxy connection rather than
     // its defence in depth. A destination is module-free and strictly narrower.
     ...policy.proxyEndpoints.map(
-      (endpoint) =>
-        `iptables -A ${CHAIN} -d ${endpoint.address} -p tcp --dport ${endpoint.port} -j ACCEPT`,
+      (endpoint) => `${ipt} -A ${CHAIN} -d ${endpoint.address} -p tcp --dport ${endpoint.port} -j ACCEPT`,
     ),
     // Kept as well, when the module is there: it covers a proxy that resolves
     // to an address we did not pin, e.g. after tun2socks reconnects.
-    `iptables -A ${CHAIN} -m mark --mark ${mark}/0xffff -j ACCEPT 2>/dev/null ||` +
+    `${ipt} -A ${CHAIN} -m mark --mark ${mark}/0xffff -j ACCEPT 2>/dev/null ||` +
       ` echo "WARN: no mark match available; only the resolved proxy addresses are reachable."`,
-    ...policy.controlSubnets.map((subnet) => `iptables -A ${CHAIN} -d ${subnet} -j ACCEPT`),
+    ...policy.controlSubnets.map((subnet) => `${ipt} -A ${CHAIN} -d ${subnet} -j ACCEPT`),
     // REJECT, not DROP: a leak should fail in milliseconds and be visible in a
     // log, not hang for two minutes looking like a slow network. The fallback
     // is for the same reason as the mangle guard — the REJECT target is another
     // module a thin kernel may not have — and it keeps the guarantee, because
     // what matters here is the denial, not how politely it is delivered.
-    `iptables -A ${CHAIN} -j REJECT --reject-with icmp-admin-prohibited 2>/dev/null || iptables -A ${CHAIN} -j DROP`,
-    `iptables -C OUTPUT -j ${CHAIN} 2>/dev/null || iptables -I OUTPUT 1 -j ${CHAIN}`,
+    `${ipt} -A ${CHAIN} -j REJECT --reject-with icmp-admin-prohibited 2>/dev/null || ${ipt} -A ${CHAIN} -j DROP`,
+    `${ipt} -C OUTPUT -j ${CHAIN} 2>/dev/null || ${ipt} -I OUTPUT 1 -j ${CHAIN}`,
   ].join('\n');
 }
 

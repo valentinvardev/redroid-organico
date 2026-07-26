@@ -380,7 +380,7 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     assert.match(script, /-A REDROID_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT/);
     assert.match(script, /-A REDROID_EGRESS -d 172\.30\.0\.0\/16 -j ACCEPT/);
     assert.match(script, /-A REDROID_EGRESS -j REJECT --reject-with icmp-admin-prohibited/);
-    assert.match(script, /iptables -I OUTPUT 1 -j REDROID_EGRESS/);
+    assert.match(script, /-I OUTPUT 1 -j REDROID_EGRESS/);
 
     await acquired.release();
   });
@@ -535,22 +535,43 @@ describe('egress policy script', () => {
 
     // Appends into the built-in chains are guarded with -C; the appends into
     // our own chain are safe because the chain is flushed first.
-    assert.match(script, /iptables -t mangle -C OUTPUT .* \|\| iptables -t mangle -A OUTPUT/);
-    assert.match(script, /iptables -N REDROID_EGRESS 2>\/dev\/null \|\| iptables -F REDROID_EGRESS/);
-    assert.match(script, /iptables -C OUTPUT -j REDROID_EGRESS 2>\/dev\/null \|\| iptables -I OUTPUT 1/);
+    assert.match(script, /-t mangle -C OUTPUT .* \|\| "\$IPT" -t mangle -A OUTPUT/);
+    assert.match(script, /-N REDROID_EGRESS 2>\/dev\/null \|\| "\$IPT" -F REDROID_EGRESS/);
+    assert.match(script, /-C OUTPUT -j REDROID_EGRESS 2>\/dev\/null \|\| "\$IPT" -I OUTPUT 1/);
   });
 
-  it('survives a kernel missing the mangle table or xt_mark instead of failing the job', () => {
-    // Netfilter tables and matches belong to the host kernel, and Docker only
-    // ever loads what it needs itself. A host that never modprobed
-    // iptable_mangle answers "Table does not exist"; one without xt_mark has
-    // the table and still rejects the rule. Under `set -eu` either used to
-    // abort the whole script, taking the ACL down and killing every job.
+  it('picks an iptables backend the kernel answers, instead of assuming legacy', () => {
+    // The image symlinks `iptables` to the legacy binary, and a host running
+    // nftables reports every legacy table as "Table does not exist" — first
+    // mangle, then xt_mark, then filter itself. Chasing that with modprobe is
+    // emulating, one module at a time, a backend the kernel already has.
     const script = egressPolicyScript(policy());
 
-    assert.match(script, /iptables -t mangle -A OUTPUT .* 2>\/dev\/null; then :; else/);
+    assert.match(script, /for candidate in iptables-nft iptables-legacy iptables; do/);
+    assert.match(script, /"\$candidate" -S >\/dev\/null 2>&1/);
+
+    // Every rule has to go through the chosen backend. A stray bare `iptables`
+    // would work on the developer's machine and fail on an nftables host.
+    for (const line of script.split('\n')) {
+      assert.equal(
+        /(^|\|\| |; )iptables /.test(line),
+        false,
+        `this line bypasses the detected backend: ${line}`,
+      );
+    }
+
+    // And a container where none of them work must refuse, not continue: no
+    // firewall means the device would run unfiltered.
+    assert.match(script, /exit 1/);
+  });
+
+  it('survives a kernel missing the mangle table or the MARK target', () => {
+    // Even on the right backend the mangle table can be absent. Under `set -eu`
+    // that used to abort the whole script, taking the ACL down with it.
+    const script = egressPolicyScript(policy());
+
+    assert.match(script, /-t mangle -A OUTPUT .* 2>\/dev\/null; then :; else/);
     assert.match(script, /echo "WARN: could not clear netd's socket marks/);
-    assert.match(script, /modprobe iptable_mangle xt_mark/);
   });
 
   it('lets the gateway reach its proxy without depending on any kernel module', () => {
@@ -583,7 +604,7 @@ describe('egress policy script', () => {
 
     assert.match(
       script,
-      /-j REJECT --reject-with icmp-admin-prohibited 2>\/dev\/null \|\| iptables -A REDROID_EGRESS -j DROP/,
+      /-j REJECT --reject-with icmp-admin-prohibited 2>\/dev\/null \|\| "\$IPT" -A REDROID_EGRESS -j DROP/,
       'a missing REJECT module must degrade to DROP, never to letting the packet out',
     );
   });
