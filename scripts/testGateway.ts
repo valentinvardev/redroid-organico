@@ -124,24 +124,26 @@ async function main(): Promise<void> {
     const allRoutes = await docker(['exec', GATEWAY, 'ip', 'route', 'show', 'table', 'all']);
     console.log(allRoutes.stdout.trim() || allRoutes.stderr.trim() || '    (none)');
 
-    console.log('\n==> connection from INSIDE the namespace, verbose, over plain HTTP');
-    console.log('    (shows exactly where it stalls: TCP connect vs TLS handshake)');
-    // Plain HTTP on port 80, no TLS, verbose. If the TCP connect completes and
-    // it stalls waiting for the body, the tunnel forwards but large packets are
-    // being dropped — an MTU/MSS problem. If the connect itself never
-    // completes, nothing is reaching the far side through tun2socks.
+    console.log('\n==> exit IP of a container INSIDE the gateway namespace');
+    console.log('    (this is the test — an Android device sees exactly this)');
+    // 1.1.1.1 by IP, following the http->https redirect, so no DNS is needed
+    // and the trace still yields the exit address.
     const probe = await docker([
       'run', '--rm', '--network', `container:${GATEWAY}`,
-      PROBE_IMAGE, '-v', '--max-time', '15', 'http://1.1.1.1/cdn-cgi/trace',
+      PROBE_IMAGE, '-sL', '--max-time', '20', 'http://1.1.1.1/cdn-cgi/trace',
     ]);
-
-    const out = `${probe.stdout}\n${probe.stderr}`.trim();
-    console.log(out || '    (nothing at all)');
 
     const ipLine = /(?:^|\n)ip=([0-9a-f.:]+)/i.exec(probe.stdout);
     if (ipLine) {
-      console.log(`\n    exit IP: ${ipLine[1]}  (proxy is ${runtime.host})`);
-      console.log(ipLine[1] === runtime.host ? '    ✓ routes through the proxy' : '    ✗ bypasses the proxy');
+      const exitIp = ipLine[1];
+      console.log(`\n    exit IP: ${exitIp}   (proxy is ${runtime.host})`);
+      console.log(
+        exitIp === runtime.host
+          ? '\n    ✓ Traffic leaves through the proxy. The gateway works end to end.'
+          : '\n    ✗ Traffic does NOT leave through the proxy — it is bypassing tun2socks.',
+      );
+    } else {
+      console.log(`    ${probe.stdout.trim() || probe.stderr.trim() || 'no answer'}`);
     }
   } finally {
     await docker(['rm', '-f', GATEWAY]);
