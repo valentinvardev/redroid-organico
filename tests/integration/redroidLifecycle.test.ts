@@ -14,6 +14,8 @@ import { EphemeralRedroidProvider, redroidConfigSchema } from '@/lib/android/red
 import { reapAndroidContainers } from '@/lib/android/reaper';
 import { JobStatus } from '@prisma/client';
 import type { AcquireContext } from '@/lib/android/deviceProvider';
+import { egressPolicyScript, policyFromEnv } from '@/lib/android/egressPolicy';
+import { directEgressIp, resetDirectEgressCache } from '@/lib/android/egressCheck';
 import type { ProxyRuntimeConfig } from '@/lib/proxy/config';
 import { FakeDocker, type FakeDockerOptions } from '../helpers/fakeDocker';
 import { FakeDevice, type FakeDeviceOptions } from '../helpers/fakeAppium';
@@ -42,6 +44,8 @@ function provider(
     device?: FakeDeviceOptions;
     config?: Record<string, unknown>;
     proxy?: ProxyRuntimeConfig | null;
+    /** What the worker's own address resolves to; null means "could not tell". */
+    directIp?: string | null;
   } = {},
 ) {
   const docker = options.docker ?? new FakeDocker();
@@ -70,6 +74,9 @@ function provider(
       disconnects.push(serial);
     },
     createDevice: () => device,
+    // Never the real network: the check would otherwise make an outbound
+    // request from the test suite.
+    resolveDirectIp: async () => (options.directIp === undefined ? '198.51.100.1' : options.directIp),
   });
 
   return { subject, docker, device, connects, disconnects };
@@ -323,8 +330,153 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     assert.equal(docker.containers.size, 0);
   });
 
+  it('pins the namespace only after Android has booted, and before the app is touched', async () => {
+    // Order is the whole point: netd rewrites the routing tables while it
+    // starts, so rules written at `docker run` time are gone by the time an app
+    // opens a socket. And doing it after the APK install would mean installing
+    // through a route nothing has checked.
+    const { subject, docker, device } = provider({ proxy, config: { controlNetwork: 'redroid-control-net' } });
+
+    const acquired = await subject.acquire(context({ apkPath: '/srv/apks/app.apk' }));
+
+    const hardening = docker.execs.find((call) => call.command[0] === 'sh');
+    assert.ok(hardening, 'the namespace was never hardened');
+
+    assert.deepEqual(
+      docker.events.slice(0, 4),
+      ['run:redroid-gw-job-1', 'connect:redroid-control-net', 'run:redroid-job-job-1', 'exec:redroid-gw-job-1'],
+      'gateway, control network, device, then hardening',
+    );
+
+    assert.ok(
+      device.probes.length > 0,
+      'the egress check has to run against the device, not against the gateway',
+    );
+
+    await acquired.release();
+  });
+
+  it('writes rules that beat netd on priority and fail closed', async () => {
+    const { subject, docker } = provider({
+      proxy,
+      config: { controlNetwork: 'redroid-control-net' },
+    });
+
+    const acquired = await subject.acquire(context());
+    const script = docker.execs.find((call) => call.command[0] === 'sh')?.command[2] ?? '';
+
+    // Layer 1: below netd's band, which starts at 10000. The bypass has to come
+    // first or the gateway's own connection to the proxy loops into the tun.
+    assert.match(script, /ip rule add fwmark 0x22b lookup main pref 90/);
+    assert.match(script, /ip rule add lookup 0x22b pref 100/);
+
+    // Layer 2: netd's per-socket mark cleared, which also forces a re-route.
+    assert.match(script, /-t mangle -A OUTPUT -m mark ! --mark 0x22b\/0xffff -j MARK --set-xmark 0x0/);
+
+    // Layer 3: the ACL, and specifically that it ends in a REJECT. An ACL whose
+    // last word is not a denial is decoration.
+    assert.match(script, /-A REDROID_EGRESS -o tun0 -j ACCEPT/);
+    assert.match(script, /-A REDROID_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT/);
+    assert.match(script, /-A REDROID_EGRESS -d 172\.30\.0\.0\/16 -j ACCEPT/);
+    assert.match(script, /-A REDROID_EGRESS -j REJECT --reject-with icmp-admin-prohibited/);
+    assert.match(script, /iptables -I OUTPUT 1 -j REDROID_EGRESS/);
+
+    await acquired.release();
+  });
+
+  it('turns IPv6 off in the namespace, where the policy cannot see it', async () => {
+    // The gateway carries a v4 tun and the image has no ip6tables, so a v6
+    // route would be an exit no rule in the script can block.
+    const { subject, docker } = provider({ proxy });
+
+    const acquired = await subject.acquire(context());
+
+    assert.equal(docker.runs[0].sysctls?.['net.ipv6.conf.all.disable_ipv6'], '1');
+    await acquired.release();
+  });
+
+  it('refuses the device when it answers from this host’s own address', async () => {
+    // The leak this whole mechanism exists to prevent, and the only check that
+    // measures the outcome instead of the configuration.
+    const { subject, docker } = provider({
+      proxy,
+      directIp: '198.51.100.1',
+      device: { egressIp: '198.51.100.1' },
+    });
+
+    await assert.rejects(subject.acquire(context()), /not going through the assigned proxy/);
+
+    assert.deepEqual(docker.removed, ['redroid-job-job-1', 'redroid-gw-job-1']);
+    assert.equal(docker.containers.size, 0, 'a leaking device must not be handed to the flow');
+  });
+
+  it('accepts a device whose address differs from this host’s', async () => {
+    const { subject, device } = provider({
+      proxy,
+      directIp: '198.51.100.1',
+      device: { egressIp: '203.0.113.7' },
+    });
+
+    const acquired = await subject.acquire(context());
+
+    assert.deepEqual(device.probes[0], ['curl', '-s', '--max-time', '20', 'https://api.ipify.org']);
+    await acquired.release();
+  });
+
+  it('falls back to wget when the image has no curl', async () => {
+    const { subject, device } = provider({
+      proxy,
+      device: { egressIp: '203.0.113.7', egressTools: ['toybox'] },
+    });
+
+    const acquired = await subject.acquire(context());
+
+    assert.deepEqual(
+      device.probes.map((probe) => probe[0]),
+      ['curl', 'toybox'],
+      'curl first, then the tool an AOSP image actually ships',
+    );
+
+    await acquired.release();
+  });
+
+  it('names the culprit when the device cannot reach the endpoint but the gateway can', async () => {
+    const docker = new FakeDocker({ execOutput: { wget: '203.0.113.7' } });
+    const { subject } = provider({ docker, proxy, device: { egressTools: [] } });
+
+    // The gateway answering while the device does not is the exact signature of
+    // Android routing around the tun, and the message has to say so.
+    await assert.rejects(subject.acquire(context()), /gateway can \(203\.0\.113\.7\), so the proxy works/);
+
+    assert.equal(docker.containers.size, 0);
+  });
+
+  it('does not fail a run when the worker cannot tell what its own address is', async () => {
+    // An air-gapped worker cannot answer the question, and refusing to publish
+    // over an unanswerable question would ground the fleet.
+    const { subject } = provider({ proxy, directIp: null, device: { egressIp: '203.0.113.7' } });
+
+    const acquired = await subject.acquire(context());
+    assert.ok(acquired.serial);
+
+    await acquired.release();
+  });
+
+  it('leaves the namespace alone when hardening is turned off', async () => {
+    const { subject, docker } = provider({ proxy, config: { proxyGateway: { settleMs: 0, harden: false } } });
+
+    const acquired = await subject.acquire(context());
+
+    assert.equal(
+      docker.execs.some((call) => call.command[0] === 'sh'),
+      false,
+    );
+
+    await acquired.release();
+  });
+
   it('starts no gateway at all for an account without a proxy', async () => {
-    const { subject, docker } = provider();
+    const { subject, docker, device } = provider();
 
     const acquired = await subject.acquire(context());
 
@@ -332,7 +484,89 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     assert.equal(docker.runs[0].name, 'redroid-job-job-1');
     assert.equal(docker.runs[0].capAdd, undefined);
 
+    // Nothing to pin and nothing to verify: an account with no proxy is
+    // supposed to leave through this host.
+    assert.deepEqual(docker.execs, []);
+    assert.deepEqual(device.probes, []);
+
     await acquired.release();
+  });
+});
+
+describe('egress policy script', () => {
+  it('follows the gateway when the routing table, mark or tun name are overridden', () => {
+    // The script has to describe the namespace the gateway actually built. Rules
+    // pointing at the defaults would apply cleanly and route nothing.
+    const policy = policyFromEnv(
+      { TABLE: '0x1f4', FWMARK: '0x1f4', TUN: 'redroid0' },
+      ['10.10.0.0/24', '10.20.0.0/24'],
+    );
+
+    const script = egressPolicyScript(policy);
+
+    assert.match(script, /ip rule add fwmark 0x1f4 lookup main pref 90/);
+    assert.match(script, /ip rule add lookup 0x1f4 pref 100/);
+    assert.match(script, /-A REDROID_EGRESS -o redroid0 -j ACCEPT/);
+    assert.match(script, /-d 10\.10\.0\.0\/24 -j ACCEPT/);
+    assert.match(script, /-d 10\.20\.0\.0\/24 -j ACCEPT/);
+    assert.equal(script.includes('0x22b'), false, 'no default may survive an override');
+  });
+
+  it('guards every mutation so a retried acquisition does not stack a second copy', () => {
+    const script = egressPolicyScript(policyFromEnv({}, ['172.30.0.0/16']));
+
+    for (const line of script.split('\n')) {
+      if (line.startsWith('ip rule add')) {
+        const pref = /pref (\d+)/.exec(line)?.[1];
+        assert.ok(pref, `no priority in: ${line}`);
+        assert.ok(
+          script.includes(`ip rule del pref ${pref}`),
+          `${line} is added without being deleted first, so a second run doubles it`,
+        );
+      }
+    }
+
+    // Appends into the built-in chains are guarded with -C; the appends into
+    // our own chain are safe because the chain is flushed first.
+    assert.match(script, /iptables -t mangle -C OUTPUT .* \|\| iptables -t mangle -A OUTPUT/);
+    assert.match(script, /iptables -N REDROID_EGRESS 2>\/dev\/null \|\| iptables -F REDROID_EGRESS/);
+    assert.match(script, /iptables -C OUTPUT -j REDROID_EGRESS 2>\/dev\/null \|\| iptables -I OUTPUT 1/);
+  });
+
+  it('opens nothing when there is no control network to name', () => {
+    const script = egressPolicyScript(policyFromEnv({}, []));
+
+    assert.equal(/-d \S+ -j ACCEPT/.test(script), false);
+    // The device is still reachable: replies to an inbound connection are what
+    // ADB needs, and that rule does not depend on knowing any subnet.
+    assert.match(script, /--ctstate ESTABLISHED,RELATED -j ACCEPT/);
+  });
+});
+
+describe('this host’s own address', () => {
+  it('is measured once and remembered, not fetched per job', async () => {
+    resetDirectEgressCache();
+    let calls = 0;
+
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response('198.51.100.1\n', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    assert.equal(await directEgressIp('http://echo.test/ip', 1_000, fetchImpl), '198.51.100.1');
+    assert.equal(await directEgressIp('http://echo.test/ip', 1_000, fetchImpl), '198.51.100.1');
+    assert.equal(calls, 1, 'it is a property of the host, not of the job');
+  });
+
+  it('answers null instead of throwing when there is no way out', async () => {
+    resetDirectEgressCache();
+
+    const fetchImpl = (async () => {
+      throw new Error('getaddrinfo ENOTFOUND');
+    }) as unknown as typeof fetch;
+
+    assert.equal(await directEgressIp('http://echo.test/ip', 1_000, fetchImpl), null);
+    resetDirectEgressCache();
   });
 });
 

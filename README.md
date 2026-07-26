@@ -249,6 +249,8 @@ Clasificación de errores, que es lo que decide si BullMQ reintenta:
 | App caída tras el launch | `app_not_running` | **No** |
 | Credenciales/flujo inválidos | `invalid_android_credentials` | **No** |
 | Cuenta con proxy sobre un dispositivo `attached` | `proxy_requires_ephemeral_device` | **No** |
+| El dispositivo sale por la IP del host | `egress_leak_detected` | **No** |
+| Ni el dispositivo ni el gateway alcanzan la red | `egress_unreachable` | Sí |
 
 Reintentar un selector equivocado tres veces gasta cinco minutos, informa lo
 mismo, y esconde un defecto real de la app detrás de "intento 3/3".
@@ -385,8 +387,11 @@ Consecuencias que conviene tener presentes:
 - **El orden del teardown importa.** Docker no deja borrar un contenedor mientras
   otro le presta el namespace: primero el dispositivo, después el gateway. El
   reaper barre en ese orden por la etiqueta `redroid-organico.role`.
-- **HTTP relaya solo TCP.** Lo que el teléfono mande por UDP —DNS incluido— no
-  tiene por dónde salir. Si el proveedor ofrece las dos, SOCKS5.
+- **HTTP relaya solo TCP, y en la práctica ni eso.** Lo que el teléfono mande por
+  UDP —DNS incluido— no tiene por dónde salir, y muchos proxies HTTP resetean
+  cualquier CONNECT que no vaya al 443. Si el proveedor ofrece las dos sobre el
+  mismo endpoint, SOCKS5 siempre (`npm run gateway:test -- --proxy <label> --as
+  socks5` lo prueba sin tocar la fila).
 - **Una cuenta con proxy exige contenedor efímero.** Sobre un dispositivo
   `attached` no hay namespace que apropiarse, así que el job falla con
   `proxy_requires_ephemeral_device` en vez de publicar desde la IP del host.
@@ -410,6 +415,77 @@ Endpoints, todos bajo la sesión del usuario dueño de la cuenta:
 El cambio aplica al **próximo** job: un teléfono que ya está corriendo se queda
 con el gateway con el que arrancó, porque mover un contenedor vivo a otro
 namespace de red no es algo que Docker sepa hacer.
+
+#### Por qué compartir el namespace no alcanza
+
+Meter al ReDroid en el namespace del gateway es necesario pero **no suficiente**:
+`netd` no es un inquilino pasivo de ese namespace. Instala sus propias reglas de
+policy routing y le estampa a cada socket el netId con `SO_MARK`, así que el
+tráfico de Android matchea *sus* reglas y sale por eth0 mientras un `curl` sin
+marca, en el mismo namespace, sigue obedientemente el tun. Nada se escapa del
+namespace —no puede—: netd simplemente gana por prioridad, porque todo lo que
+instala vive en la banda 10000–32000 y el catch-all del gateway queda por encima.
+
+El diagnóstico, en dos comandos:
+
+```bash
+GW=redroid-gw-<jobId>
+docker exec $GW ip route get 1.1.1.1            # sin marca: lo que hace curl
+docker exec $GW ip route get 1.1.1.1 mark 100   # con netId: lo que hace Android
+```
+
+Si la primera dice `dev tun0` y la segunda `dev eth0`, es esto.
+
+La respuesta son tres capas, en `lib/android/egressPolicy.ts`, aplicadas por
+`docker exec` **después** de `sys.boot_completed` —netd inserta sus jumps al tope
+de las cadenas mientras arranca, así que lo que se escriba antes queda detrás:
+
+1. **Ruteo.** Las mismas reglas en `pref 90` (bypass del socket propio de
+   tun2socks) y `pref 100` (todo lo demás al tun), por debajo de todo lo de netd.
+2. **Marcado.** `mangle OUTPUT` borra la marca de netd, lo que además obliga al
+   kernel a rehacer el lookup de ruta para ese paquete.
+3. **ACL.** Decida lo que decida el ruteo, solo pueden emitir: `lo`, el `tun0`,
+   las respuestas a conexiones entrantes (ADB), el socket marcado del gateway y
+   la subred de control. El resto, `REJECT`. Un leak deja de ser una IP
+   equivocada y pasa a ser una conexión que falla.
+
+La red de control existe para que esa única excepción no sea un agujero:
+`redroid-control-net` está declarada `internal: true`, o sea que Docker no le da
+ruta fuera del host. La restricción vive **afuera** del namespace, donde Android
+no la puede tocar ni siendo privilegiado.
+
+Y como nada de lo anterior es evidencia, cada job con proxy termina la
+adquisición preguntándole al dispositivo por su propia IP y comparándola con la
+del host:
+
+```
+[info] Egress verified from inside the device  deviceIp=203.0.113.7 directIp=190.x.x.x
+```
+
+Si coinciden, el job falla con `egress_leak_detected` (permanente: reintentar
+sería otra chance de publicar desde la IP equivocada) y el contenedor se destruye
+antes de que el flujo toque la app. La comparación es contra la IP **directa**,
+no contra la del proxy, porque un residencial rotativo entrega un exit distinto
+por conexión y compararlo contra el proxy daría falsos positivos todo el día.
+
+El check corre `curl` en el dispositivo y cae a `toybox wget` si no está. AOSP no
+trae curl: se hornea en la golden image con `--tool`, y tiene que ir a
+`/system/bin` porque `/data` es un mount de runtime que `docker commit` nunca
+captura.
+
+```bash
+./scripts/build-golden-image.sh --apk app.apk --tag mi/redroid:golden \
+  --tool ./bin/curl-arm64-static
+```
+
+Ajustes, todos en el bloque `proxyGateway` de las credenciales:
+
+| Clave | Default | Para qué |
+| --- | --- | --- |
+| `harden` | `true` | Aplicar las tres capas. Apagarlo es solo para depurar |
+| `disableIpv6` | `true` | La imagen no trae `ip6tables`: una ruta v6 sería una salida que el ACL no ve |
+| `egressCheck.enabled` | `true` | El gate de verificación |
+| `egressCheck.url` | `https://api.ipify.org` | Tiene que devolver una IP pelada. Usá `http://` si dependés del fallback a wget |
 
 #### Preparar el host (esto no es opcional)
 

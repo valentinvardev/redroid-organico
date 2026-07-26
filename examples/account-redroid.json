@@ -20,11 +20,25 @@
     "gpuMode": "guest",
     "startTimeoutSeconds": 240,
 
+    "//controlNetwork": "Internal network carrying only ADB. Declared in docker-compose.yml with internal:true, so the one subnet the egress firewall has to allow has no route off the host.",
+    "controlNetwork": "redroid-control-net",
+
     "//proxyGateway": "Only used when the account has a proxy assigned in the dashboard. The proxy itself lives in the database, not here — this block is just how the gateway container is built.",
     "proxyGateway": {
       "image": "xjasonlyu/tun2socks:v2.5.1",
       "logLevel": "info",
-      "env": {}
+      "env": {},
+
+      "//harden": "Rewrites routing and firewall rules inside the namespace once Android has booted, so netd cannot route around the tun. Leave it on.",
+      "harden": true,
+      "disableIpv6": true,
+
+      "//egressCheck": "Asks the device what its own address looks like from outside and fails the job if it matches this host's. Use an http:// URL if the image has no curl and has to fall back to busybox wget.",
+      "egressCheck": {
+        "enabled": true,
+        "url": "https://api.ipify.org",
+        "timeoutSeconds": 20
+      }
     }
   },
 

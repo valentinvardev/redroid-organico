@@ -60,6 +60,37 @@ export const proxyGatewayConfigSchema = z.object({
    * Android boot takes to fail afterwards.
    */
   settleMs: z.number().int().min(0).max(60_000).default(2_000),
+
+  /**
+   * Rewrite the namespace's routing and firewall once Android has booted, so
+   * netd cannot route around the tun. See lib/android/egressPolicy.ts. Off is
+   * for debugging only: without it the device's own sockets leave through eth0.
+   */
+  harden: z.boolean().default(true),
+
+  /**
+   * Turn IPv6 off in the namespace. The gateway carries a v4 tun and no
+   * ip6tables, so a v6 route is an egress the policy cannot see, let alone
+   * block — the classic way a "working" proxy setup leaks.
+   */
+  disableIpv6: z.boolean().default(true),
+
+  /**
+   * Ask the device what its own address looks like from the outside, and refuse
+   * to run the flow if it matches this host's. The only check that measures the
+   * result instead of the intent.
+   */
+  egressCheck: z
+    .object({
+      enabled: z.boolean().default(true),
+      /**
+       * Must return a bare IP address. An `http://` URL also works with the
+       * busybox wget fallback, which an AOSP image has and curl it may not.
+       */
+      url: z.string().url().default('https://api.ipify.org'),
+      timeoutSeconds: z.number().int().positive().max(120).default(20),
+    })
+    .prefault({}),
 });
 
 export type ProxyGatewayConfig = z.infer<typeof proxyGatewayConfigSchema>;
@@ -70,8 +101,19 @@ export interface StartGatewayOptions {
   jobId: string;
   accountId: string;
   config: ProxyGatewayConfig;
-  /** Docker network to join. The device inherits it through the namespace. */
+  /**
+   * Docker network to join, and the one the proxy is reached over. The device
+   * inherits it through the namespace, which is why the egress ACL has to be
+   * the thing that keeps Android off it.
+   */
   network?: string;
+  /**
+   * A second, `internal` network carrying nothing but ADB. Attached after the
+   * container exists, because `docker run` takes one network. Its subnet is
+   * what the ACL opens: an internal network has no route off the host, so even
+   * a mistake in that rule cannot become an exit.
+   */
+  controlNetwork?: string;
   /** Published here because the device cannot publish ports of its own. */
   publishContainerPort?: number;
   log: JobLogger;
@@ -82,6 +124,8 @@ export interface RunningGateway {
   name: string;
   /** The `--network` value that puts a container inside this gateway's namespace. */
   networkMode: string;
+  /** CIDRs of the control network, empty when there is none to open up. */
+  controlSubnets: string[];
   /** Never throws; the reaper is the backstop. */
   remove(): Promise<void>;
 }
@@ -127,6 +171,15 @@ export async function startProxyGateway(options: StartGatewayOptions): Promise<R
       devices: ['/dev/net/tun'],
       network: options.network,
       publishContainerPort: options.publishContainerPort,
+      // Set on the gateway, inherited by every container that joins its
+      // namespace — including the one running Android, which is the only way to
+      // reach its stack from out here.
+      sysctls: config.disableIpv6
+        ? {
+            'net.ipv6.conf.all.disable_ipv6': '1',
+            'net.ipv6.conf.default.disable_ipv6': '1',
+          }
+        : undefined,
       env: {
         ...config.env,
         // Last, so no operator-supplied override can point the gateway at a
@@ -152,8 +205,24 @@ export async function startProxyGateway(options: StartGatewayOptions): Promise<R
     }
   };
 
+  let controlSubnets: string[] = [];
+
   try {
     await assertStillRunning(docker, name, config.settleMs, signal);
+
+    if (options.controlNetwork) {
+      // After the run, not part of it: `docker run` accepts a single network,
+      // and the egress one has to be first so the default route points at the
+      // proxy rather than into a network with no way out.
+      await docker.connectNetwork(options.controlNetwork, name, { signal });
+      controlSubnets = await docker.networkSubnets(options.controlNetwork, { signal });
+
+      await log.info('Attached the gateway to the control network', {
+        container: name,
+        network: options.controlNetwork,
+        subnets: controlSubnets,
+      });
+    }
   } catch (error) {
     const logs = await docker.logs(name, 40).catch(() => '');
     await remove();
@@ -165,7 +234,7 @@ export async function startProxyGateway(options: StartGatewayOptions): Promise<R
     );
   }
 
-  return { name, networkMode: `container:${name}`, remove };
+  return { name, networkMode: `container:${name}`, controlSubnets, remove };
 }
 
 /**

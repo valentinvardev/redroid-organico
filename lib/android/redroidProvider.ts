@@ -14,6 +14,8 @@ import {
   type DockerClient,
 } from './docker';
 import { proxyGatewayConfigSchema, startProxyGateway, type RunningGateway } from './proxyGateway';
+import { applyEgressPolicy, policyFromEnv } from './egressPolicy';
+import { assertProxiedEgress } from './egressCheck';
 import { ensurePackageInstalled, type AcquireContext, type AcquiredDevice, type DeviceProvider } from './deviceProvider';
 
 export const redroidConfigSchema = z.object({
@@ -46,9 +48,20 @@ export const redroidConfigSchema = z.object({
   /**
    * Passed to `docker run --network`. When the account has a proxy this is the
    * network the *gateway* joins, since the device then lives inside the
-   * gateway's namespace and cannot be given one of its own.
+   * gateway's namespace and cannot be given one of its own. It is also the
+   * network the proxy is reached over, so it must have a way off the host.
    */
   network: z.string().min(1).optional(),
+
+  /**
+   * A second network carrying only ADB, joined by the gateway after it starts.
+   * Create it with `internal: true` — see docker-compose.yml. Then the subnet
+   * the egress ACL has to leave open is one with no route to the internet, and
+   * the control plane stops being a hole in the isolation.
+   *
+   * Only meaningful together with a proxy.
+   */
+  controlNetwork: z.string().min(1).optional(),
 
   /**
    * How the per-job tun2socks gateway is built. Unused by accounts with no
@@ -111,6 +124,12 @@ export interface RedroidProviderOptions {
   connect?: (serial: string, signal: AbortSignal) => Promise<void>;
   disconnect?: (serial: string) => Promise<void>;
   createDevice?: (serial: string) => AndroidDevice;
+  /**
+   * The address this host is seen as, which is what a leaked packet would show.
+   * A seam as well: without it the egress check would reach the internet from
+   * the test suite.
+   */
+  resolveDirectIp?: () => Promise<string | null>;
 }
 
 function containerName(jobId: string): string {
@@ -173,6 +192,7 @@ export class EphemeralRedroidProvider implements DeviceProvider {
           accountId: context.accountId,
           config: config.proxyGateway,
           network: config.network,
+          controlNetwork: config.controlNetwork,
           // Publishing has to happen on whichever container owns the network
           // stack, and with a gateway that is not the device.
           publishContainerPort: publishesPort ? 5555 : undefined,
@@ -260,6 +280,15 @@ export class EphemeralRedroidProvider implements DeviceProvider {
 
       serial = await this.resolveSerial(networkHost, context);
       const device = await this.waitUntilUsable(serial, name, gateway, context);
+
+      // Both of these run before the app is touched, and in this order: pin the
+      // namespace while nothing is using the network, then prove the pin worked.
+      // Doing it after `ensurePackageInstalled` would mean downloading an APK
+      // through a route that may not be the proxy's.
+      if (gateway) {
+        await this.pinEgress(gateway, device, context);
+      }
+
       await ensurePackageInstalled(device, context);
 
       await context.log.info('Android container ready', { container: name, serial });
@@ -276,6 +305,48 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       await release();
       throw enriched;
     }
+  }
+
+  /**
+   * Makes the device use the gateway, and then proves that it does.
+   *
+   * Deliberately two steps rather than one. Applying the rules is a statement
+   * about what the worker asked for; the check is the only evidence about what
+   * Android actually did with them — and Android's routing is exactly the thing
+   * that cannot be taken on trust here.
+   */
+  private async pinEgress(
+    gateway: RunningGateway,
+    device: AndroidDevice,
+    context: AcquireContext,
+  ): Promise<void> {
+    const { proxyGateway } = this.options.config;
+
+    if (proxyGateway.harden) {
+      await applyEgressPolicy({
+        docker: this.docker,
+        gatewayName: gateway.name,
+        policy: policyFromEnv(proxyGateway.env, gateway.controlSubnets),
+        log: context.log,
+        signal: context.signal,
+      });
+    }
+
+    if (!proxyGateway.egressCheck.enabled) {
+      await context.log.warn('Egress check disabled; nothing has verified where this device exits');
+      return;
+    }
+
+    await assertProxiedEgress({
+      device,
+      docker: this.docker,
+      gatewayName: gateway.name,
+      url: proxyGateway.egressCheck.url,
+      timeoutSeconds: proxyGateway.egressCheck.timeoutSeconds,
+      resolveDirectIp: this.options.resolveDirectIp,
+      log: context.log,
+      signal: context.signal,
+    });
   }
 
   /**

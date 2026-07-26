@@ -146,6 +146,10 @@ services:
       - "4723:4723"
     networks:
       - redroid
+      # Where it actually reaches proxied devices. A gateway container joins
+      # this one too, and its subnet is the only destination the device's egress
+      # ACL leaves open — see lib/android/egressPolicy.ts.
+      - redroid-control
     healthcheck:
       test: ["CMD", "adb", "-P", "5037", "version"]
       interval: 10s
@@ -218,5 +222,20 @@ networks:
   # Named explicitly so the worker can pass it to `docker run --network` when it
   # creates a ReDroid container. An implicit compose network name would depend
   # on the project directory.
+  #
+  # This is also the network a proxy gateway reaches its proxy over, so it has
+  # to keep its route off the host.
   redroid:
     name: redroid-net
+
+  # ADB only, and deliberately unable to reach anything else.
+  #
+  # A device pinned to a proxy has one hole in its egress firewall: the subnet
+  # its control plane lives on, because the ADB connection has to keep working.
+  # `internal` makes that hole lead nowhere — Docker gives this bridge no route
+  # off the host — so a mistake in that one rule cannot turn into an exit. The
+  # enforcement sits outside the namespace, where Android cannot reach it even
+  # though its container is privileged.
+  redroid-control:
+    name: redroid-control-net
+    internal: true
