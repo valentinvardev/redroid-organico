@@ -43,7 +43,21 @@ export class EgressUnreachableError extends Error {
 
 const IP_PATTERN = /^[0-9a-f.:]{3,45}$/i;
 
+/**
+ * Reads the address out of whatever the endpoint answered.
+ *
+ * Two shapes, because the default endpoint is reached by IP to avoid DNS and
+ * that rules out the services that return a bare address: Cloudflare's
+ * `/cdn-cgi/trace` is a set of `key=value` lines, everything else is the
+ * address on its own.
+ */
 function firstAddress(raw: string): string | null {
+  const traced = /^ip=([0-9a-f.:]+)\s*$/im.exec(raw);
+
+  if (traced) {
+    return traced[1];
+  }
+
   const candidate = raw
     .split('\n')
     .map((line) => line.trim())
@@ -65,7 +79,9 @@ export async function deviceEgressIp(
   signal: AbortSignal,
 ): Promise<string> {
   const attempts: string[][] = [
-    ['curl', '-s', '--max-time', String(timeoutSeconds), url],
+    // -L because the DNS-free default endpoint answers on plain HTTP with a
+    // redirect to TLS.
+    ['curl', '-sL', '--max-time', String(timeoutSeconds), url],
     ['toybox', 'wget', '-q', '-O', '-', url],
     ['wget', '-q', '-O', '-', url],
   ];
@@ -73,7 +89,28 @@ export async function deviceEgressIp(
   const failures: string[] = [];
 
   for (const command of attempts) {
-    const result = await device.probe(command, signal);
+    // Every attempt gets its own deadline. Only curl takes a timeout flag, and
+    // a device whose packets are being swallowed by the tunnel does not answer
+    // at all — without this the probe inherits adb's ten-minute default and
+    // three tools turn a dead network into half an hour of a job that looks
+    // like it is doing something.
+    let result: Awaited<ReturnType<AndroidDevice['probe']>>;
+
+    try {
+      result = await device.probe(
+        command,
+        AbortSignal.any([signal, AbortSignal.timeout(timeoutSeconds * 1_000)]),
+      );
+    } catch (error) {
+      // The job itself being cancelled is not this function's to swallow.
+      if (signal.aborted) {
+        throw error;
+      }
+
+      failures.push(`${command[0]}: no answer within ${timeoutSeconds}s`);
+      continue;
+    }
+
     const address = firstAddress(result.stdout);
 
     if (result.code === 0 && address) {
@@ -86,8 +123,12 @@ export async function deviceEgressIp(
 
   throw new EgressUnreachableError(
     `The device could not fetch ${url}. Tried: ${failures.join('; ')}. ` +
-      'If the tools are missing, bake one into the golden image (scripts/build-golden-image.sh --tool) ' +
-      'or turn the check off with proxyGateway.egressCheck.enabled=false.',
+      'A timeout on every tool usually means the tunnel is swallowing the packets rather than the ' +
+      'tools being absent — and if the URL carries a hostname, suspect DNS first: it is UDP, and a ' +
+      'SOCKS5 proxy without UDP ASSOCIATE drops it silently. ' +
+      'If the tools really are missing, bake one into the golden image ' +
+      '(scripts/build-golden-image.sh --tool) or turn the check off with ' +
+      'proxyGateway.egressCheck.enabled=false.',
   );
 }
 

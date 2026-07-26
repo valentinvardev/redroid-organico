@@ -420,7 +420,16 @@ describe('EphemeralRedroidProvider with a proxy', () => {
 
     const acquired = await subject.acquire(context());
 
-    assert.deepEqual(device.probes[0], ['curl', '-s', '--max-time', '20', 'https://api.ipify.org']);
+    assert.deepEqual(device.probes[0], [
+      'curl',
+      '-sL',
+      '--max-time',
+      '20',
+      // By IP: a hostname would need DNS, which is UDP and does not survive a
+      // SOCKS5 proxy with no UDP ASSOCIATE — the check would time out on the
+      // one thing it is not measuring.
+      'http://1.1.1.1/cdn-cgi/trace',
+    ]);
     await acquired.release();
   });
 
@@ -439,6 +448,39 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     );
 
     await acquired.release();
+  });
+
+  it('reads the address out of a cdn-cgi/trace body, not just a bare line', async () => {
+    const { subject, device } = provider({
+      proxy,
+      directIp: '198.51.100.1',
+      device: { egressBody: 'fl=123abc\nh=1.1.1.1\nip=203.0.113.7\nts=1700000000\n' },
+    });
+
+    const acquired = await subject.acquire(context());
+    assert.ok(acquired.serial, 'the trace body has to be understood, not treated as unreachable');
+
+    await acquired.release();
+    assert.ok(device.probes.length > 0);
+  });
+
+  it('gives up on a probe that never answers instead of waiting out adb', async () => {
+    // A tunnel that swallows packets answers nothing at all. Only curl takes a
+    // timeout flag, so without a deadline of our own the probe inherits adb's
+    // ten minutes — three times over, on a job that looks alive the whole time.
+    const { subject } = provider({
+      proxy,
+      config: { proxyGateway: { settleMs: 0, egressCheck: { timeoutSeconds: 1 } } },
+      device: { egressHangs: true },
+    });
+
+    const started = Date.now();
+    await assert.rejects(subject.acquire(context()), /no answer within 1s/);
+
+    assert.ok(
+      Date.now() - started < 30_000,
+      'the probe has to be bounded by the configured timeout, not by adb’s default',
+    );
   });
 
   it('names the culprit when the device cannot reach the endpoint but the gateway can', async () => {

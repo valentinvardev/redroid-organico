@@ -217,8 +217,12 @@ export interface FakeDeviceOptions {
   installFails?: boolean;
   /** What the device answers when asked for its own address. */
   egressIp?: string;
+  /** Verbatim body, for endpoints that answer something other than a bare address. */
+  egressBody?: string;
   /** Which fetch tools exist on the device. Empty means the check has none. */
   egressTools?: string[];
+  /** The probe never answers, like a tunnel that swallows the packets. */
+  egressHangs?: boolean;
 }
 
 /** An AndroidDevice that answers from memory, so no emulator is needed. */
@@ -288,7 +292,10 @@ export class FakeDevice implements AndroidDevice {
    * Answers as a device with `curl` and no `wget` unless told otherwise, which
    * is what a golden image built with `--tool curl` looks like.
    */
-  async probe(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+  async probe(
+    args: string[],
+    signal?: AbortSignal,
+  ): Promise<{ stdout: string; stderr: string; code: number }> {
     this.probes.push(args);
 
     const tools = this.options.egressTools ?? ['curl'];
@@ -297,7 +304,30 @@ export class FakeDevice implements AndroidDevice {
       return { stdout: '', stderr: `${args[0]}: inaccessible or not found`, code: 127 };
     }
 
-    return { stdout: `${this.options.egressIp ?? '203.0.113.7'}\n`, stderr: '', code: 0 };
+    if (this.options.egressHangs) {
+      // Never answers on its own: the caller's deadline has to be what ends it,
+      // which is the whole point of the test that uses this. The timer is only
+      // there to hold the event loop open — a real probe keeps it alive with an
+      // adb process, and `AbortSignal.timeout` deliberately does not.
+      return new Promise((_resolve, reject) => {
+        const keepAlive = setTimeout(() => reject(new Error('probe never answered')), 60_000);
+
+        signal?.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(keepAlive);
+            reject(new Error('probe aborted'));
+          },
+          { once: true },
+        );
+      });
+    }
+
+    return {
+      stdout: this.options.egressBody ?? `${this.options.egressIp ?? '203.0.113.7'}\n`,
+      stderr: '',
+      code: 0,
+    };
   }
 }
 

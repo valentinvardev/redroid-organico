@@ -84,10 +84,17 @@ export const proxyGatewayConfigSchema = z.object({
     .object({
       enabled: z.boolean().default(true),
       /**
-       * Must return a bare IP address. An `http://` URL also works with the
-       * busybox wget fallback, which an AOSP image has and curl it may not.
+       * Reached by IP on purpose. DNS is UDP, and a SOCKS5 proxy without UDP
+       * ASSOCIATE — most residential ones — drops it without a word, so a
+       * hostname here turns the check into a timeout that says nothing about
+       * the thing being checked. Cloudflare's trace endpoint answers on plain
+       * HTTP, which also keeps the busybox wget fallback usable on an image
+       * with no TLS.
+       *
+       * Anything returning a bare address, or a `key=value` body carrying an
+       * `ip=` line, works.
        */
-      url: z.string().url().default('https://api.ipify.org'),
+      url: z.string().url().default('http://1.1.1.1/cdn-cgi/trace'),
       timeoutSeconds: z.number().int().positive().max(120).default(20),
     })
     .prefault({}),

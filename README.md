@@ -485,7 +485,7 @@ Ajustes, todos en el bloque `proxyGateway` de las credenciales:
 | `harden` | `true` | Aplicar las tres capas. Apagarlo es solo para depurar |
 | `disableIpv6` | `true` | La imagen no trae `ip6tables`: una ruta v6 sería una salida que el ACL no ve |
 | `egressCheck.enabled` | `true` | El gate de verificación |
-| `egressCheck.url` | `https://api.ipify.org` | Tiene que devolver una IP pelada. Usá `http://` si dependés del fallback a wget |
+| `egressCheck.url` | `http://1.1.1.1/cdn-cgi/trace` | Por IP a propósito: un hostname necesita DNS, que es UDP y no sobrevive a un SOCKS5 sin UDP ASSOCIATE. Sirve cualquier endpoint que devuelva una IP pelada o un cuerpo con una línea `ip=` |
 
 #### Preparar el host (esto no es opcional)
 
