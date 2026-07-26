@@ -86,6 +86,12 @@ export interface RunContainerSpec {
    * which is how a device is pinned to its proxy gateway.
    */
   network?: string;
+  /**
+   * Namespaced kernel parameters, e.g. `net.ipv6.conf.all.disable_ipv6`. A
+   * container sharing this one's namespace inherits them, which is the only way
+   * to reach Android's stack: the gateway image ships no ip6tables.
+   */
+  sysctls?: Record<string, string>;
   memoryLimit?: string;
   /** ReDroid takes its configuration as kernel-style command arguments. */
   command?: string[];
@@ -100,6 +106,19 @@ export interface DockerClient {
   remove(nameOrId: string, options?: DockerExecOptions): Promise<void>;
   listByLabel(label: string, value: string, options?: DockerExecOptions): Promise<ContainerSummary[]>;
   ensureVolume(name: string, labels: Record<string, string>, options?: DockerExecOptions): Promise<void>;
+  /**
+   * Runs a command inside a container. Used to reconfigure the network
+   * namespace after Android's netd has finished rearranging it, which is a
+   * moment `docker run` cannot express.
+   */
+  exec(nameOrId: string, command: string[], options?: DockerExecOptions): Promise<string>;
+  /**
+   * Attaches a running container to a second network. `docker run` takes only
+   * one, and the gateway needs two: egress for the proxy, control for ADB.
+   */
+  connectNetwork(network: string, nameOrId: string, options?: DockerExecOptions): Promise<void>;
+  /** CIDRs configured on a network, so the egress ACL can name the control plane. */
+  networkSubnets(network: string, options?: DockerExecOptions): Promise<string[]>;
 }
 
 export interface ContainerSummary {
@@ -164,6 +183,10 @@ export class DockerCli implements DockerClient {
 
     for (const [key, value] of Object.entries(spec.env ?? {})) {
       args.push('--env', `${key}=${value}`);
+    }
+
+    for (const [key, value] of Object.entries(spec.sysctls ?? {})) {
+      args.push('--sysctl', `${key}=${value}`);
     }
 
     args.push(spec.image, ...(spec.command ?? []));
@@ -235,6 +258,34 @@ export class DockerCli implements DockerClient {
       .map((line) => line.split('\t'))
       .filter((parts) => parts.length >= 2)
       .map(([id, name, labels]) => ({ id, name, labels: parseLabels(labels ?? '') }));
+  }
+
+  async exec(nameOrId: string, command: string[], options: DockerExecOptions = {}): Promise<string> {
+    return docker(this.dockerCommand, ['exec', nameOrId, ...command], options);
+  }
+
+  async connectNetwork(network: string, nameOrId: string, options: DockerExecOptions = {}): Promise<void> {
+    try {
+      await docker(this.dockerCommand, ['network', 'connect', network, nameOrId], options);
+    } catch (error) {
+      // Re-connecting an already-attached container is not a failure; a retried
+      // acquisition would otherwise die on its own previous success.
+      if (error instanceof DockerError && /already exists in network|is already attached/i.test(error.stderr)) {
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  async networkSubnets(network: string, options: DockerExecOptions = {}): Promise<string[]> {
+    const stdout = await docker(
+      this.dockerCommand,
+      ['network', 'inspect', network, '--format', '{{range .IPAM.Config}}{{.Subnet}} {{end}}'],
+      options,
+    );
+
+    return stdout.split(/\s+/).filter((entry) => entry.includes('/'));
   }
 
   async ensureVolume(name: string, labels: Record<string, string>, options: DockerExecOptions = {}): Promise<void> {
