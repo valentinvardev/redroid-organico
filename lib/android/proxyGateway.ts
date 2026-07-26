@@ -84,17 +84,20 @@ export const proxyGatewayConfigSchema = z.object({
     .object({
       enabled: z.boolean().default(true),
       /**
-       * Reached by IP on purpose. DNS is UDP, and a SOCKS5 proxy without UDP
-       * ASSOCIATE — most residential ones — drops it without a word, so a
-       * hostname here turns the check into a timeout that says nothing about
-       * the thing being checked. Cloudflare's trace endpoint answers on plain
-       * HTTP, which also keeps the busybox wget fallback usable on an image
-       * with no TLS.
+       * An ordinary web host, and plain HTTP.
+       *
+       * The device never resolves it — the worker does, and hands the address
+       * to curl's `--resolve` — because DNS is UDP and a SOCKS5 proxy without
+       * UDP ASSOCIATE drops it silently. Addressing the endpoint by IP dodges
+       * DNS too, but the well-known ones are public DNS resolvers, and a
+       * residential provider blocks those on principle: the CONNECT comes back
+       * "connection not allowed by ruleset" and the check accuses a proxy that
+       * is working.
        *
        * Anything returning a bare address, or a `key=value` body carrying an
        * `ip=` line, works.
        */
-      url: z.string().url().default('http://1.1.1.1/cdn-cgi/trace'),
+      url: z.string().url().default('http://api.ipify.org'),
       timeoutSeconds: z.number().int().positive().max(120).default(20),
     })
     .prefault({}),

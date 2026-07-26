@@ -43,6 +43,24 @@ export class EgressUnreachableError extends Error {
 
 const IP_PATTERN = /^[0-9a-f.:]{3,45}$/i;
 
+/** `host:port:address`, the shape curl's --resolve takes. */
+function resolveSpec(url: string, address: string): string {
+  const parsed = new URL(url);
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+
+  return `${parsed.hostname}:${port}:${address}`;
+}
+
+/** The endpoint's hostname, or null when it is already an address. */
+export function egressCheckHost(url: string): string | null {
+  try {
+    const { hostname } = new URL(url);
+    return IP_PATTERN.test(hostname) ? null : hostname;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Reads the address out of whatever the endpoint answered.
  *
@@ -77,11 +95,27 @@ export async function deviceEgressIp(
   url: string,
   timeoutSeconds: number,
   signal: AbortSignal,
+  /**
+   * The endpoint's host, resolved by the worker. Handed to curl's `--resolve`
+   * so the device never performs a lookup: DNS is UDP, and a SOCKS5 proxy
+   * without UDP ASSOCIATE swallows it. This is what lets the endpoint be an
+   * ordinary hostname — an IP literal dodges DNS too, but the obvious ones are
+   * public resolvers, which residential providers block on principle.
+   */
+  resolvedAddress?: string | null,
 ): Promise<string> {
   const attempts: string[][] = [
-    // -L because the DNS-free default endpoint answers on plain HTTP with a
-    // redirect to TLS.
-    ['curl', '-sL', '--max-time', String(timeoutSeconds), url],
+    [
+      'curl',
+      // -L because a plain-HTTP endpoint may redirect to TLS.
+      '-sL',
+      '--max-time',
+      String(timeoutSeconds),
+      ...(resolvedAddress ? ['--resolve', `${resolveSpec(url, resolvedAddress)}`] : []),
+      url,
+    ],
+    // No `--resolve` equivalent in either: these need the device to resolve the
+    // name, or an endpoint addressed by IP.
     ['toybox', 'wget', '-q', '-O', '-', url],
     ['wget', '-q', '-O', '-', url],
   ];
@@ -124,8 +158,10 @@ export async function deviceEgressIp(
   throw new EgressUnreachableError(
     `The device could not fetch ${url}. Tried: ${failures.join('; ')}. ` +
       'A timeout on every tool usually means the tunnel is swallowing the packets rather than the ' +
-      'tools being absent — and if the URL carries a hostname, suspect DNS first: it is UDP, and a ' +
-      'SOCKS5 proxy without UDP ASSOCIATE drops it silently. ' +
+      'tools being absent. Read the gateway log below before anything else: "connection not allowed ' +
+      'by ruleset" is the proxy refusing this destination — residential providers block public DNS ' +
+      'resolvers and odd ports as a matter of course — and the fix is another egressCheck.url, not ' +
+      'another routing rule. ' +
       'If the tools really are missing, bake one into the golden image ' +
       '(scripts/build-golden-image.sh --tool) or turn the check off with ' +
       'proxyGateway.egressCheck.enabled=false.',
@@ -232,6 +268,8 @@ export interface EgressCheckOptions {
   signal: AbortSignal;
   /** Injected by tests; production measures the worker's own address. */
   resolveDirectIp?: () => Promise<string | null>;
+  /** The endpoint's host, resolved worker-side so the device needs no DNS. */
+  resolvedAddress?: string | null;
 }
 
 export async function assertProxiedEgress(options: EgressCheckOptions): Promise<string> {
@@ -240,7 +278,7 @@ export async function assertProxiedEgress(options: EgressCheckOptions): Promise<
   let deviceIp: string;
 
   try {
-    deviceIp = await deviceEgressIp(device, url, timeoutSeconds, signal);
+    deviceIp = await deviceEgressIp(device, url, timeoutSeconds, signal, options.resolvedAddress);
   } catch (error) {
     // Ask the gateway the same question, purely to name the culprit.
     const fromGateway = await gatewayEgressIp(docker, gatewayName, url, timeoutSeconds, signal);

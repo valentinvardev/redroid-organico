@@ -15,7 +15,7 @@ import {
 } from './docker';
 import { proxyGatewayConfigSchema, startProxyGateway, type RunningGateway } from './proxyGateway';
 import { applyEgressPolicy, policyFromEnv, resolveProxyEndpoints } from './egressPolicy';
-import { assertProxiedEgress } from './egressCheck';
+import { assertProxiedEgress, egressCheckHost } from './egressCheck';
 import { ensurePackageInstalled, type AcquireContext, type AcquiredDevice, type DeviceProvider } from './deviceProvider';
 
 export const redroidConfigSchema = z.object({
@@ -357,6 +357,14 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       return;
     }
 
+    // Resolved here so the device never has to: DNS is UDP and does not survive
+    // a SOCKS5 proxy with no UDP ASSOCIATE. An endpoint already written as an
+    // address needs nothing.
+    const checkHost = egressCheckHost(proxyGateway.egressCheck.url);
+    const resolved = checkHost
+      ? await resolveProxyEndpoints({ host: checkHost, port: 80 }, this.options.lookupHost)
+      : [];
+
     await assertProxiedEgress({
       device,
       docker: this.docker,
@@ -364,6 +372,7 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       url: proxyGateway.egressCheck.url,
       timeoutSeconds: proxyGateway.egressCheck.timeoutSeconds,
       resolveDirectIp: this.options.resolveDirectIp,
+      resolvedAddress: resolved[0]?.address ?? null,
       log: context.log,
       signal: context.signal,
     });

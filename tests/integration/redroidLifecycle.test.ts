@@ -420,15 +420,18 @@ describe('EphemeralRedroidProvider with a proxy', () => {
 
     const acquired = await subject.acquire(context());
 
+    // --resolve, not a hostname the device would have to look up: DNS is UDP
+    // and does not survive a SOCKS5 proxy with no UDP ASSOCIATE. And not an IP
+    // literal either — the well-known ones are public resolvers, which a
+    // residential provider refuses to relay to.
     assert.deepEqual(device.probes[0], [
       'curl',
       '-sL',
       '--max-time',
       '20',
-      // By IP: a hostname would need DNS, which is UDP and does not survive a
-      // SOCKS5 proxy with no UDP ASSOCIATE — the check would time out on the
-      // one thing it is not measuring.
-      'http://1.1.1.1/cdn-cgi/trace',
+      '--resolve',
+      'api.ipify.org:80:78.143.233.210',
+      'http://api.ipify.org',
     ]);
     await acquired.release();
   });
