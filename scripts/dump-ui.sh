@@ -1,38 +1,59 @@
 #!/usr/bin/env bash
 #
-# Prints what is on the device's screen as a table of selectors, so a flow can
-# be written from what the app actually exposes rather than from guesses.
+# Prints what was on the screen as a table of selectors, so a flow can be
+# written from what the app actually exposes rather than from guesses.
 #
-#   ./scripts/dump-ui.sh                 # first redroid-job-* device found
-#   ./scripts/dump-ui.sh <serial>
-#   ./scripts/dump-ui.sh <serial> --all  # every node, not just the useful ones
+#   ./scripts/dump-ui.sh                     live: first redroid-job-* device
+#   ./scripts/dump-ui.sh <serial>            live: a specific device
+#   ./scripts/dump-ui.sh --artifact          the newest saved failure dump
+#   ./scripts/dump-ui.sh --artifact <path>   a specific saved dump
+#   ... --all                                every node, not just targetable ones
 #
-# Raw `uiautomator dump` output is one enormous line of XML; this pulls out the
-# fields a UI flow can actually target.
+# The artifact modes matter because a failed run has already been torn down:
+# the device is gone, and the .xml the driver saved next to its screenshot is
+# the only record of what the app was showing when the step failed.
 set -euo pipefail
 
-SERIAL="${1:-}"
-MODE="${2:-}"
+ARTIFACT=""
+SERIAL=""
+MODE=""
 
-if [[ -z "$SERIAL" || "$SERIAL" == --* ]]; then
-  MODE="${SERIAL:-}"
-  SERIAL="$(adb devices | awk '/redroid-job/ && /device$/ {print $1; exit}')"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --artifact)
+      if [[ -n "${2:-}" && "$2" != --* ]]; then
+        ARTIFACT="$2"; shift 2
+      else
+        ARTIFACT="$(ls -t .storage/artifacts/*/*.xml 2>/dev/null | head -1 || true)"
+        [[ -n "$ARTIFACT" ]] || { echo "No saved dumps under .storage/artifacts/." >&2; exit 1; }
+        shift
+      fi
+      ;;
+    --all) MODE="--all"; shift ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) SERIAL="$1"; shift ;;
+  esac
+done
+
+if [[ -n "$ARTIFACT" ]]; then
+  echo "artifact: $ARTIFACT" >&2
+  XML="$(cat "$ARTIFACT")"
+else
+  if [[ -z "$SERIAL" ]]; then
+    SERIAL="$(adb devices | awk '/redroid-job/ && /device$/ {print $1; exit}')"
+  fi
+
+  if [[ -z "$SERIAL" ]]; then
+    echo "No redroid-job-* device attached. Start a run, pass a serial, or use --artifact." >&2
+    adb devices >&2
+    exit 1
+  fi
+
+  echo "device: $SERIAL" >&2
+  XML="$(adb -s "$SERIAL" exec-out uiautomator dump /dev/tty 2>/dev/null | tr -d '\r')"
 fi
 
-if [[ -z "$SERIAL" ]]; then
-  echo "No redroid-job-* device attached. Start a link from the dashboard, or pass a serial." >&2
-  adb devices >&2
-  exit 1
-fi
-
-echo "device: $SERIAL" >&2
-
-XML="$(adb -s "$SERIAL" exec-out uiautomator dump /dev/tty 2>/dev/null | tr -d '\r')"
-
-if [[ -z "$XML" ]]; then
-  echo "uiautomator returned nothing. Is the screen on and the app in the foreground?" >&2
-  exit 1
-fi
+[[ -n "$XML" ]] || { echo "Nothing to read." >&2; exit 1; }
 
 MODE="$MODE" python3 - <<'PY' <<<"$XML"
 import os, re, sys
@@ -62,14 +83,14 @@ if not rows:
     print('Nothing targetable on screen.', file=sys.stderr)
     sys.exit(1)
 
-widths = [max(len(r[i]) for r in rows + [('resource-id', 'text', 'content-desc', 'class', '')]) for i in range(5)]
 header = ('resource-id', 'text', 'content-desc', 'class', '')
+widths = [min(60, max(len(r[i]) for r in rows + [header])) for i in range(5)]
 
 def line(cols):
-    return '  '.join(c[:60].ljust(min(w, 60)) for c, w in zip(cols, widths))
+    return '  '.join(c[:60].ljust(w) for c, w in zip(cols, widths))
 
 print(line(header))
-print('  '.join('-' * min(w, 60) for w in widths))
+print('  '.join('-' * w for w in widths))
 for row in rows:
     print(line(row))
 
