@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from 'fs/promises';
-import { tmpdir } from 'os';
+import { mkdir, mkdtemp, rm } from 'fs/promises';
 import path from 'path';
 import { JobStatus, JobType, Prisma, SessionState } from '@prisma/client';
 import type { Job as BullJob } from 'bullmq';
@@ -157,7 +156,11 @@ async function runPublish(
     );
   }
 
-  const scratch = await mkdtemp(path.join(tmpdir(), `job-${job.id}-`));
+  // Deliberately not os.tmpdir(): see MEDIA_STAGING_DIR in lib/env.ts.
+  const stagingRoot = path.resolve(process.cwd(), getEnv().MEDIA_STAGING_DIR);
+  await mkdir(stagingRoot, { recursive: true });
+
+  const scratch = await mkdtemp(path.join(stagingRoot, `job-${job.id}-`));
 
   try {
     const localPath = path.join(scratch, job.video.fileName || 'video.mp4');

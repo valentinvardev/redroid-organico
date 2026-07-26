@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { mkdir, readFile } from 'fs/promises';
+import path from 'path';
 import { prisma } from '@/lib/db';
 import { getEnv } from '@/lib/env';
 import { closeRedis } from '@/lib/queue/connection';
@@ -35,7 +37,40 @@ async function startContainerReaping(): Promise<ReaperHandle | undefined> {
   return startAndroidReaper(env.ANDROID_REAPER_INTERVAL_MS);
 }
 
+/**
+ * Video staging on a RAM-backed filesystem is invisible until the day a large
+ * upload competes with an Android container for memory and the kernel picks a
+ * loser. Cheap to check once, at boot, where somebody will read it.
+ */
+async function warnIfStagingIsInMemory(): Promise<void> {
+  const dir = path.resolve(process.cwd(), env.MEDIA_STAGING_DIR);
+  await mkdir(dir, { recursive: true });
+
+  try {
+    const mounts = await readFile('/proc/mounts', 'utf8');
+    const onTmpfs = mounts
+      .split('\n')
+      .map((line) => line.split(' '))
+      .filter(([, , type]) => type === 'tmpfs')
+      .some(([, mountPoint]) => dir === mountPoint || dir.startsWith(`${mountPoint}/`));
+
+    if (onTmpfs) {
+      console.warn(
+        `[worker] MEDIA_STAGING_DIR (${dir}) is on a tmpfs — staged videos are held in RAM ` +
+          'and compete with the Android containers. Point it at a real disk.',
+      );
+      return;
+    }
+  } catch {
+    // Not Linux, or /proc unavailable. Nothing to warn about.
+  }
+
+  console.log(`[worker] staging media in ${dir}`);
+}
+
 async function main(): Promise<void> {
+  await warnIfStagingIsInMemory();
+
   const recovered = await recoverOrphans();
 
   if (recovered > 0) {

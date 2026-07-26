@@ -26,3 +26,6 @@ next-env.d.ts
 
 # Test storage
 .storage-test/
+
+# Video staging (MEDIA_STAGING_DIR)
+.staging/

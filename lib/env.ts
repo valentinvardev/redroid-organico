@@ -48,6 +48,14 @@ const schema = z.object({
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   STORAGE_LOCAL_DIR: z.string().default('./.storage'),
 
+  /// Where the worker materialises a video before pushing it to a device.
+  ///
+  /// Must be on a real filesystem. The obvious choice, os.tmpdir(), is /tmp —
+  /// which on most cloud images is a tmpfs, i.e. RAM. Staging a few hundred
+  /// megabytes of video there competes with the Android containers for the
+  /// same memory, and the loser is whichever process the kernel picks.
+  MEDIA_STAGING_DIR: z.string().default('./.staging'),
+
   S3_BUCKET: z.string().optional(),
   S3_REGION: z.string().optional(),
   S3_ENDPOINT: z.string().optional(),
