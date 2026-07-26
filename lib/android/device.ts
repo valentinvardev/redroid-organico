@@ -105,14 +105,14 @@ export class AdbDevice implements AndroidDevice {
         throw new Error(`Cancelled while waiting for ${remoteDir} to become writable`);
       }
 
-      const result = await adbShellProbe(
-        this.adbCommand,
-        this.target,
-        ['sh', '-c', `touch '${probe}' && rm -f '${probe}' && echo writable`],
-        signal,
-      );
+      // One command per call, no `sh -c`. adb concatenates its arguments and
+      // the device shell re-parses the result, so a quoted compound command
+      // arrives mangled — `sh -c touch '...' && ...` runs `touch` with no
+      // arguments and fails for a reason that has nothing to do with storage.
+      const result = await adbShellProbe(this.adbCommand, this.target, ['touch', probe], signal);
 
-      if (result.code === 0 && result.stdout.includes('writable')) {
+      if (result.code === 0) {
+        await adbShellProbe(this.adbCommand, this.target, ['rm', '-f', probe], signal).catch(() => undefined);
         return;
       }
 
