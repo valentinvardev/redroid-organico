@@ -36,9 +36,21 @@ export interface PublisherVideo {
 
 export interface PublishRequest {
   jobId: string;
+  /** Empty for a flow that posts no text (a login or scroll run). */
   caption: string;
   account: PublisherAccount;
-  video: PublisherVideo;
+  /**
+   * Absent for a flow that stages no media. Only the default upload flow needs
+   * a video; a login or scroll run carries none, and a driver must not assume
+   * one is present.
+   */
+  video?: PublisherVideo;
+  /**
+   * Which named flow to run. Null or undefined selects the account's default
+   * flow (the historical upload behaviour); any other value looks the flow up
+   * by name in the account's credentials.
+   */
+  flowType?: string | null;
   log: JobLogger;
   /** Aborted when the job exceeds its timeout or the worker is shutting down. */
   signal: AbortSignal;

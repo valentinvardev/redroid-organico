@@ -5,6 +5,7 @@ import type {
   OnboardingRequest,
   OnboardingResult,
   Publisher,
+  PublisherVideo,
   PublishRequest,
   PublishResult,
 } from './types';
@@ -29,7 +30,8 @@ import {
 import { captureEvidence } from '@/lib/android/evidence';
 import { EgressLeakError, EgressUnreachableError } from '@/lib/android/egressCheck';
 import { redactProxyUrl, type ProxyRuntimeConfig } from '@/lib/proxy/config';
-import { runUiFlow, uiFlowSchema, type UiFlowResult, UiStepError } from '@/lib/android/uiFlow';
+import { runUiFlow, uiFlowSchema, type UiFlowResult, type UiStep, UiStepError } from '@/lib/android/uiFlow';
+import { DEFAULT_FLOW_TYPE, isDefaultFlow } from '@/lib/jobs/flowType';
 
 /**
  * No platform defaults live here on purpose. The previous version defaulted to
@@ -81,6 +83,16 @@ export const androidCredentialsSchema = z.object({
   flow: uiFlowSchema,
 
   /**
+   * Named flows a job selects by its flowType. `flow` above is the default and
+   * also answers to "upload"; anything else a job might run — "login",
+   * "scroll" — lives here, keyed by the name the job asks for. Holding them in
+   * the account's own config lets one account be driven through several
+   * scenarios without a second credentials blob, and an unknown flowType is a
+   * misconfiguration the driver refuses rather than a flow it guesses at.
+   */
+  flows: z.record(z.string().min(1), uiFlowSchema).optional(),
+
+  /**
    * Run after a person says they finished logging in, to check that they
    * actually did. Required to use INTERACTIVE_ONBOARDING at all: marking an
    * account VERIFIED because someone clicked a button is the same category of
@@ -120,6 +132,38 @@ function parseCredentials(raw: unknown): AndroidCredentials {
   }
 
   return parsed.data;
+}
+
+/**
+ * Resolves the flow a job asked for by its flowType. The default (a null
+ * flowType, or the reserved name "upload") is `credentials.flow`, so ordinary
+ * publishing is untouched. Any other name must exist in `credentials.flows`: a
+ * missing one is a permanent misconfiguration, refused here rather than fallen
+ * back from, because running the wrong flow silently is exactly the "false
+ * green" this driver was rewritten to stop.
+ */
+export function selectFlow(
+  credentials: AndroidCredentials,
+  flowType: string | null | undefined,
+): { name: string; steps: UiStep[] } {
+  if (isDefaultFlow(flowType)) {
+    // "upload" prefers an explicit flows.upload but falls back to the single
+    // `flow` every existing account already carries.
+    return { name: DEFAULT_FLOW_TYPE, steps: credentials.flows?.[DEFAULT_FLOW_TYPE] ?? credentials.flow };
+  }
+
+  const name = flowType as string;
+  const steps = credentials.flows?.[name];
+
+  if (!steps) {
+    const available = [DEFAULT_FLOW_TYPE, ...Object.keys(credentials.flows ?? {})].join(', ');
+    throw permanent(
+      'unknown_flow_type',
+      `This account has no flow named "${name}". Configured flows: ${available}.`,
+    );
+  }
+
+  return { name, steps };
 }
 
 /**
@@ -416,21 +460,29 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
     const { caption, account, video, log, signal, jobId } = request;
     const credentials = parseCredentials(account.credentials);
 
-    await this.assertMediaIsStaged(video);
+    const flow = selectFlow(credentials, request.flowType);
+
+    // Only the upload flow stages a video. A login or scroll run carries none,
+    // so pushing a file it never touches would just make the job slower and
+    // more fragile for no reason.
+    if (video) {
+      await this.assertMediaIsStaged(video);
+    }
 
     const provider = (this.deps.createProvider ?? defaultProvider)(credentials, account.proxy);
-    const remotePath = uniqueRemotePath(credentials.remoteVideoPath, jobId);
+    const remotePath = video ? uniqueRemotePath(credentials.remoteVideoPath, jobId) : null;
 
     await log.info('Starting Android run', {
       accountId: account.id,
       packageName: credentials.packageName,
       provider: provider.kind,
+      flowType: flow.name,
       // Recorded per run because the assignment can change between runs, and
       // "which IP did this publication come from" is the first question asked
       // when an account gets flagged. Redacted — see redactProxyUrl.
       egress: account.proxy ? redactProxyUrl(account.proxy) : 'host network',
-      remotePath,
-      steps: credentials.flow.length,
+      remotePath: remotePath ?? undefined,
+      steps: flow.steps.length,
     });
 
     let acquired: AcquiredDevice | null = null;
@@ -440,8 +492,10 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
     try {
       acquired = await this.acquire(provider, credentials, account.id, jobId, log, signal);
 
-      await this.stageMedia(acquired.device, remotePath, video.localPath, video.sizeBytes, log, signal);
-      mediaPushed = true;
+      if (video && remotePath) {
+        await this.stageMedia(acquired.device, remotePath, video.localPath, video.sizeBytes, log, signal);
+        mediaPushed = true;
+      }
 
       session = await this.startSession(credentials, acquired.serial, signal);
       await log.info('Appium session started', { sessionId: session.sessionId });
@@ -464,8 +518,15 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
 
       const result = await runUiFlow(
         session,
-        credentials.flow,
-        { caption, remoteVideoPath: remotePath, fileName: video.fileName, jobId },
+        flow.steps,
+        {
+          caption,
+          jobId,
+          // Only for a media flow: a non-upload flow that references
+          // {{remoteVideoPath}} by mistake then leaves the placeholder visible
+          // in the logs instead of resolving to a misleading empty string.
+          ...(video && remotePath ? { remoteVideoPath: remotePath, fileName: video.fileName } : {}),
+        },
         log,
         signal,
       );
@@ -482,7 +543,7 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
         await deleteAppiumSession(session, signal).catch(() => undefined);
       }
 
-      if (mediaPushed && acquired) {
+      if (mediaPushed && acquired && remotePath) {
         await acquired.device.removeFile(remotePath, signal).catch(() => undefined);
       }
 
@@ -532,7 +593,7 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
     }
   }
 
-  private async assertMediaIsStaged(video: PublishRequest['video']): Promise<void> {
+  private async assertMediaIsStaged(video: PublisherVideo): Promise<void> {
     let sizeOnDisk: number;
 
     try {

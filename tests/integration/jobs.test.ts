@@ -7,6 +7,7 @@ import {
   JobConflictError,
   JobValidationError,
   cancelJob,
+  createFlowJob,
   createPublishJob,
   retryJob,
 } from '@/lib/jobs/service';
@@ -189,6 +190,96 @@ describe('job creation', () => {
     const queued = await getPublishQueue().getJob(job.id);
     assert.ok(queued);
     assert.ok(queued.opts.delay && queued.opts.delay > 50_000, `expected a ~60s delay, got ${queued.opts.delay}`);
+  });
+});
+
+describe('flow jobs', () => {
+  it('creates a media-less flow with no video or caption', async () => {
+    const user = await createUser();
+    const account = await createAccount(user.id);
+
+    const { job, created } = await createFlowJob({
+      userId: user.id,
+      accountId: account.id,
+      flowType: 'login',
+    });
+
+    assert.equal(created, true);
+    assert.equal(job.status, JobStatus.QUEUED);
+    assert.equal(job.flowType, 'login');
+    assert.equal(job.videoId, null);
+    assert.equal(job.caption, null);
+
+    const queued = await getPublishQueue().getJob(job.id);
+    assert.ok(queued, 'a media-less flow is still enqueued');
+  });
+
+  it('normalises the default upload flow to a null flowType', async () => {
+    const { user, account, video } = await seedFixture();
+
+    const { job } = await createFlowJob({
+      userId: user.id,
+      accountId: account.id,
+      flowType: 'upload',
+      videoId: video.id,
+      caption: 'hello',
+    });
+
+    // "an ordinary job carries no flowType string" — so the worker's default
+    // path is the one everything already in flight exercises.
+    assert.equal(job.flowType, null);
+    assert.equal(job.videoId, video.id);
+  });
+
+  it('still requires a video and caption for the upload flow', async () => {
+    const user = await createUser();
+    const account = await createAccount(user.id);
+
+    await assert.rejects(
+      () => createFlowJob({ userId: user.id, accountId: account.id, flowType: 'upload' }),
+      JobValidationError,
+    );
+  });
+
+  it('records a per-job proxy override that belongs to the user', async () => {
+    const user = await createUser();
+    const account = await createAccount(user.id);
+    const proxy = await prisma.proxy.create({
+      data: { userId: user.id, label: 'nz', type: 'SOCKS5', host: 'proxy.test', port: 1080 },
+    });
+
+    const { job } = await createFlowJob({
+      userId: user.id,
+      accountId: account.id,
+      flowType: 'scroll',
+      proxyId: proxy.id,
+      regionLabel: 'nz',
+    });
+
+    assert.equal(job.proxyId, proxy.id);
+    assert.equal(job.regionLabel, 'nz');
+  });
+
+  it('refuses a proxy override owned by a different user', async () => {
+    const owner = await createUser();
+    const account = await createAccount(owner.id);
+    const stranger = await createUser();
+    const strangerProxy = await prisma.proxy.create({
+      data: { userId: stranger.id, label: 'theirs', type: 'SOCKS5', host: 'proxy.test', port: 1080 },
+    });
+
+    await assert.rejects(
+      () =>
+        createFlowJob({
+          userId: owner.id,
+          accountId: account.id,
+          flowType: 'scroll',
+          proxyId: strangerProxy.id,
+        }),
+      JobValidationError,
+    );
+
+    assert.equal(await prisma.job.count(), 0, 'no job is created when the override is invalid');
   });
 });
 

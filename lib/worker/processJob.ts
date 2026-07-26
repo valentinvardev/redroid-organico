@@ -17,8 +17,10 @@ import type {
   OnboardingResult,
   PublisherAccount,
   Publisher,
+  PublishResult,
 } from '@/lib/publisher/types';
 import type { PublishJobData } from '@/lib/queue/publishQueue';
+import { flowRequiresVideo } from '@/lib/jobs/flowType';
 import { reserve, touch } from './rateLimiter';
 
 const PUBLISH_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -38,7 +40,7 @@ export interface ProcessJobDeps {
 }
 
 type JobWithRelations = Prisma.JobGetPayload<{
-  include: { account: { include: { proxy: true } }; video: true };
+  include: { account: { include: { proxy: true } }; video: true; proxy: true };
 }>;
 
 /**
@@ -60,10 +62,11 @@ export async function processJob(
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    // The proxy comes along with the account: which egress a run uses is
-    // decided by the row, at the moment the job starts, not by anything the
-    // driver is configured with.
-    include: { account: { include: { proxy: true } }, video: true },
+    // The egress a run uses is decided by the row at the moment the job starts,
+    // not by anything the driver is configured with. Two sources, in order:
+    // the job's own proxy (a per-run region override) wins over the account's
+    // default proxy — see publisherAccount.
+    include: { account: { include: { proxy: true } }, video: true, proxy: true },
   });
 
   if (!job) {
@@ -137,13 +140,18 @@ export async function processJob(
 }
 
 function publisherAccount(job: JobWithRelations): PublisherAccount {
+  // A per-job proxy overrides the account's own egress, so a load test can send
+  // one account out through several regions across a batch. Null on the job
+  // falls back to the account's default; openProxy decrypts whichever wins.
+  const egress = job.proxy ?? job.account.proxy;
+
   return {
     id: job.account.id,
     name: job.account.name,
     platform: job.account.platform,
     externalId: job.account.externalId,
     credentials: job.account.credentials ? openSecret(job.account.credentials) : null,
-    proxy: job.account.proxy ? openProxy(job.account.proxy) : null,
+    proxy: egress ? openProxy(egress) : null,
   };
 }
 
@@ -153,14 +161,34 @@ async function runPublish(
   log: JobLogger,
   signal: AbortSignal,
 ): Promise<void> {
-  // The type says these are optional because onboarding jobs carry neither.
-  // Re-checking here rather than trusting the type keeps a malformed row from
-  // reaching a driver that would deref null.
-  if (!job.video || job.caption === null) {
+  // Re-checked here rather than trusting the type: the default upload flow must
+  // have both a video and a caption, while a named media-less flow (login,
+  // scroll) legitimately has neither. Onboarding jobs never reach this path.
+  if (flowRequiresVideo(job.flowType) && (!job.video || job.caption === null)) {
     throw permanent(
       'incomplete_publish_job',
-      `Job ${job.id} is a ${job.type} job but has no ${job.video ? 'caption' : 'video'}`,
+      `Job ${job.id} runs the ${job.flowType ?? 'upload'} flow but has no ${job.video ? 'caption' : 'video'}`,
     );
+  }
+
+  const account = publisherAccount(job);
+  const caption = job.caption ?? '';
+
+  // No media: nothing to download or clean up, so run the flow directly. This
+  // is what lets a login or scroll run happen without an operator having to
+  // attach a video it would never touch.
+  if (!job.video) {
+    const result = await publisher.publish({
+      jobId: job.id,
+      caption,
+      account,
+      flowType: job.flowType,
+      log,
+      signal,
+    });
+
+    await recordPublished(job.id, result, log);
+    return;
   }
 
   // Deliberately not os.tmpdir(): see MEDIA_STAGING_DIR in lib/env.ts.
@@ -178,8 +206,9 @@ async function runPublish(
 
     const result = await publisher.publish({
       jobId: job.id,
-      caption: job.caption,
-      account: publisherAccount(job),
+      caption,
+      account,
+      flowType: job.flowType,
       video: {
         id: job.video.id,
         localPath,
@@ -194,26 +223,27 @@ async function runPublish(
       signal,
     });
 
-    await prisma.job.update({
-      where: { id: job.id },
-      data: {
-        status: JobStatus.COMPLETED,
-        completedAt: new Date(),
-        externalPostId: result.externalPostId,
-        errorMessage: null,
-        // Only overwrite when the driver measured; a driver that reports no
-        // metrics should not blank a value the enqueuer may have pre-seeded.
-        ...(result.metrics ? { metrics: result.metrics as Prisma.InputJsonValue } : {}),
-      },
-    });
-
-    await log.info('Published successfully', {
-      externalPostId: result.externalPostId,
-      url: result.url,
-    });
+    await recordPublished(job.id, result, log);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
+}
+
+async function recordPublished(jobId: string, result: PublishResult, log: JobLogger): Promise<void> {
+  await prisma.job.update({
+    where: { id: jobId },
+    data: {
+      status: JobStatus.COMPLETED,
+      completedAt: new Date(),
+      externalPostId: result.externalPostId,
+      errorMessage: null,
+      // Only overwrite when the driver measured; a driver that reports no
+      // metrics should not blank a value the enqueuer may have pre-seeded.
+      ...(result.metrics ? { metrics: result.metrics as Prisma.InputJsonValue } : {}),
+    },
+  });
+
+  await log.info('Published successfully', { externalPostId: result.externalPostId, url: result.url });
 }
 
 /**

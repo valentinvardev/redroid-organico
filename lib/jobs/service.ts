@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Prisma, type Job, JobStatus, JobType, SessionState } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { DEFAULT_FLOW_TYPE, flowRequiresVideo, isDefaultFlow } from '@/lib/jobs/flowType';
 import { jobLogger } from '@/lib/logging/jobLogger';
 import { signalHumanDone } from '@/lib/onboarding/signal';
 import { getPublishQueue, type PublishJobData } from '@/lib/queue/publishQueue';
@@ -52,10 +53,49 @@ export interface CreatePublishJobResult {
   created: boolean;
 }
 
-export async function createPublishJob(input: CreatePublishJobInput): Promise<CreatePublishJobResult> {
-  const caption = input.caption.trim();
+export interface CreateFlowJobInput {
+  userId: string;
+  accountId: string;
 
-  if (caption.length === 0) {
+  /**
+   * Which flow the run drives. Null (or "upload") is the account's default flow
+   * and requires a video and caption; any other name — "login", "scroll" — runs
+   * a media-less flow the account declares in its credentials.
+   */
+  flowType?: string | null;
+
+  /** Required for the upload flow, optional otherwise. */
+  videoId?: string | null;
+  caption?: string | null;
+
+  idempotencyKey?: string;
+  scheduledAt?: Date | null;
+
+  /** Load-test tags, recorded on the row for the run report. */
+  runProfile?: string | null;
+  regionLabel?: string | null;
+
+  /**
+   * Per-run egress override — the enqueuer's "region per job". Must be one of
+   * this user's proxies. Null leaves the account's own proxy in charge, which
+   * is what every ordinary job does.
+   */
+  proxyId?: string | null;
+
+  allowConcurrentDuplicate?: boolean;
+}
+
+/**
+ * The general job factory: a run of some flow, for an account, optionally with
+ * media and optionally through a per-run egress. createPublishJob is the
+ * upload-shaped wrapper over this, and the API still calls that; the bulk
+ * enqueuer calls this directly to vary flow and region per job.
+ */
+export async function createFlowJob(input: CreateFlowJobInput): Promise<CreatePublishJobResult> {
+  const needsVideo = flowRequiresVideo(input.flowType);
+  const caption = input.caption?.trim() ?? '';
+
+  if (needsVideo && caption.length === 0) {
     throw new JobValidationError('Caption must not be empty');
   }
 
@@ -75,10 +115,7 @@ export async function createPublishJob(input: CreatePublishJobInput): Promise<Cr
     return { job: existingByKey, created: false };
   }
 
-  const [account, video] = await Promise.all([
-    prisma.account.findFirst({ where: { id: input.accountId, userId: input.userId } }),
-    prisma.video.findFirst({ where: { id: input.videoId, userId: input.userId } }),
-  ]);
+  const account = await prisma.account.findFirst({ where: { id: input.accountId, userId: input.userId } });
 
   if (!account) {
     throw new JobValidationError(`Account ${input.accountId} not found`);
@@ -98,34 +135,62 @@ export async function createPublishJob(input: CreatePublishJobInput): Promise<Cr
     );
   }
 
-  if (!video) {
-    throw new JobValidationError(`Video ${input.videoId} not found`);
+  // A per-run egress override must be one of this user's own proxies — never
+  // another tenant's, and never a dangling id.
+  let proxyId: string | null = null;
+  if (input.proxyId) {
+    const proxy = await prisma.proxy.findFirst({
+      where: { id: input.proxyId, userId: input.userId },
+      select: { id: true },
+    });
+
+    if (!proxy) {
+      throw new JobValidationError(`Proxy ${input.proxyId} not found`);
+    }
+
+    proxyId = proxy.id;
   }
 
-  if (video.status !== 'READY') {
-    throw new JobValidationError(`Video is ${video.status.toLowerCase()}, expected READY`);
-  }
+  let videoId: string | null = null;
 
-  // A different request already publishing this video to this account is a
-  // duplicate. Rows carrying *this* key are excluded deliberately: a concurrent
-  // request with the same key may have committed between the lookup above and
-  // here, and that is idempotency working, not a conflict — it falls through to
-  // the create below, where the unique constraint resolves both callers to one
-  // job. Without this exclusion the loser of that race gets a spurious 409.
-  const inFlight = await prisma.job.findFirst({
-    where: {
-      accountId: account.id,
-      videoId: video.id,
-      status: { in: ACTIVE_STATUSES },
-      idempotencyKey: { not: idempotencyKey },
-    },
-  });
+  if (needsVideo || input.videoId) {
+    if (needsVideo && !input.videoId) {
+      throw new JobValidationError('The upload flow needs a video');
+    }
 
-  if (inFlight && !input.allowConcurrentDuplicate) {
-    throw new JobConflictError(
-      `Video ${video.id} is already ${inFlight.status.toLowerCase()} for this account`,
-      inFlight.id,
-    );
+    const video = await prisma.video.findFirst({ where: { id: input.videoId!, userId: input.userId } });
+
+    if (!video) {
+      throw new JobValidationError(`Video ${input.videoId} not found`);
+    }
+
+    if (video.status !== 'READY') {
+      throw new JobValidationError(`Video is ${video.status.toLowerCase()}, expected READY`);
+    }
+
+    videoId = video.id;
+
+    // A different request already publishing this video to this account is a
+    // duplicate. Rows carrying *this* key are excluded deliberately: a
+    // concurrent request with the same key may have committed between the lookup
+    // above and here, and that is idempotency working, not a conflict — it falls
+    // through to the create below, where the unique constraint resolves both
+    // callers to one job. Without this exclusion the loser gets a spurious 409.
+    const inFlight = await prisma.job.findFirst({
+      where: {
+        accountId: account.id,
+        videoId: video.id,
+        status: { in: ACTIVE_STATUSES },
+        idempotencyKey: { not: idempotencyKey },
+      },
+    });
+
+    if (inFlight && !input.allowConcurrentDuplicate) {
+      throw new JobConflictError(
+        `Video ${video.id} is already ${inFlight.status.toLowerCase()} for this account`,
+        inFlight.id,
+      );
+    }
   }
 
   const scheduled = input.scheduledAt && input.scheduledAt.getTime() > Date.now();
@@ -137,11 +202,16 @@ export async function createPublishJob(input: CreatePublishJobInput): Promise<Cr
       data: {
         userId: input.userId,
         accountId: account.id,
-        videoId: video.id,
-        caption,
+        videoId,
+        caption: caption.length > 0 ? caption : null,
         idempotencyKey,
         status: scheduled ? JobStatus.SCHEDULED : JobStatus.QUEUED,
         scheduledAt: scheduled ? input.scheduledAt : null,
+        // Normalised: the default flow carries no string, so "an ordinary job
+        // has a null flowType" stays true and the worker's default path is the
+        // one exercised by everything already in flight.
+        flowType: isDefaultFlow(input.flowType) ? null : input.flowType,
+        proxyId,
         runProfile: input.runProfile ?? null,
         regionLabel: input.regionLabel ?? null,
       },
@@ -163,6 +233,21 @@ export async function createPublishJob(input: CreatePublishJobInput): Promise<Cr
   await enqueue(job);
 
   return { job, created: true };
+}
+
+export async function createPublishJob(input: CreatePublishJobInput): Promise<CreatePublishJobResult> {
+  return createFlowJob({
+    userId: input.userId,
+    accountId: input.accountId,
+    flowType: DEFAULT_FLOW_TYPE,
+    videoId: input.videoId,
+    caption: input.caption,
+    idempotencyKey: input.idempotencyKey,
+    scheduledAt: input.scheduledAt,
+    runProfile: input.runProfile,
+    regionLabel: input.regionLabel,
+    allowConcurrentDuplicate: input.allowConcurrentDuplicate,
+  });
 }
 
 async function enqueue(job: Job): Promise<void> {

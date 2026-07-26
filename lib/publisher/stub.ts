@@ -17,7 +17,17 @@ export class StubPublisher implements Publisher {
   readonly name = 'stub';
 
   async publish(request: PublishRequest): Promise<PublishResult> {
-    const { caption, video, log, signal } = request;
+    const { caption, video, log, signal, flowType } = request;
+
+    // A media-less flow (a login or scroll run) carries no video, and may carry
+    // no caption. There is nothing on disk to verify, so accept it and go —
+    // this is what keeps the enqueue-and-run path exercisable in development for
+    // every flow type, not just uploads.
+    if (!video) {
+      await log.info('Stub publisher accepted a media-less flow', { flowType: flowType ?? 'upload' });
+      await delay(1_200, signal);
+      return { externalPostId: `stub_${randomUUID()}` };
+    }
 
     if (caption.trim().length === 0) {
       throw permanent('empty_caption', 'Caption must not be empty');

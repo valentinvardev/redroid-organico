@@ -56,6 +56,16 @@ export class TikTokPublisher implements Publisher {
     const { caption, account, video, log, signal } = request;
     const credentials = parseCredentials(account.credentials);
 
+    // This driver only publishes uploads; there is no login or scroll flow to
+    // run, so a media-less request is a misconfiguration rather than something
+    // to attempt.
+    if (!video) {
+      throw permanent(
+        'unsupported_flow',
+        'The TikTok driver publishes uploads and has no media-less flow to run.',
+      );
+    }
+
     if (credentialExpired(credentials.expiresAt)) {
       throw needsReauth('TikTok access token has expired');
     }

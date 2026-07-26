@@ -52,6 +52,19 @@
     }
   ],
 
+  "//flows": "Named flows a job selects by its flowType (the bulk enqueuer's --flow). `flow` above is the default and also answers to 'upload'. Add media-less flows here — a login or scroll run that drives the UI without pushing a video — keyed by the name a job asks for. A job whose flowType is not 'upload' and not a key here fails rather than guessing.",
+  "flows": {
+    "login": [
+      {
+        "action": "assertVisible",
+        "name": "REPLACE ME - a control that proves the login screen is up",
+        "using": "id",
+        "value": "com.sportreels.app:id/replace_with_a_real_id",
+        "timeoutMs": 15000
+      }
+    ]
+  },
+
   "verifyFlow": [
     {
       "action": "assertVisible",

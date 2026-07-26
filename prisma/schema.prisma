@@ -154,6 +154,9 @@ model Proxy {
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   accounts Account[]
+  /// Jobs that used this proxy as a per-run egress override, distinct from the
+  /// accounts that use it by default.
+  jobs     Job[]
 
   @@unique([userId, label])
   @@index([userId])
@@ -315,12 +318,29 @@ model Job {
   regionLabel String?
   metrics     Json?
 
+  /// Which named flow this run drives — "upload", "login", "scroll". Null
+  /// selects the account's default `flow`, so an ordinary publish keeps working
+  /// without carrying the string. Resolved against the account credentials'
+  /// `flows` map in lib/publisher/android.ts; an unknown name fails the job
+  /// rather than silently falling back.
+  flowType String?
+
+  /// Per-run egress override. Null falls back to the account's own proxy, so a
+  /// job only carries this when a run deliberately points an account at a
+  /// different region than its default — the load enqueuer's per-job region.
+  /// The worker uses `job.proxy ?? account.proxy` as the effective egress.
+  proxyId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   account Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   video   Video?   @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  /// SetNull, like Account.proxy: deleting a proxy must not delete the history
+  /// of jobs that once used it, and the reason a run picked an egress lives in
+  /// regionLabel anyway.
+  proxy   Proxy?   @relation(fields: [proxyId], references: [id], onDelete: SetNull)
   logs    JobLog[]
 
   @@index([status])
@@ -331,6 +351,7 @@ model Job {
   @@index([status, expiresAt])
   /// Groups a load-test batch when the report aggregates by region and profile.
   @@index([regionLabel, runProfile])
+  @@index([proxyId])
   @@map("jobs")
 }
 

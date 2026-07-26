@@ -1,10 +1,10 @@
 import 'dotenv/config';
 import { prisma } from '@/lib/db';
-import { createOnboardingJob, createPublishJob } from '@/lib/jobs/service';
+import { createFlowJob, createOnboardingJob } from '@/lib/jobs/service';
 
 /**
  * Enqueues a batch of jobs for load and latency testing, with every knob an
- * explicit flag: how many, which flow profile, which regions to spread across,
+ * explicit flag: which flow to run, how many, which regions to spread across,
  * and how far apart to space them.
  *
  * It does not set the concurrency of *execution* — that is the worker's
@@ -13,23 +13,33 @@ import { createOnboardingJob, createPublishJob } from '@/lib/jobs/service';
  * (--stagger 0) plus a high worker concurrency is a throughput test; --stagger
  * spreads arrivals to measure steady-state latency.
  *
- *   npx tsx scripts/bulkEnqueue.ts --user <id> --video <id> \
- *     --profile upload --count 30 --regions br,de,us --stagger 500
+ *   npx tsx scripts/bulkEnqueue.ts --user <id> --account <id> \
+ *     --flow upload --video <id> --count 30 --regions br,de,us --stagger 500
  *
- * `--regions` names accounts by their proxy label: the job runs on an account
- * whose assigned egress carries that label, and is tagged with it so the report
- * can group by region. Region is therefore a property of which account runs the
- * job — see the note at the bottom on making it a per-job override instead.
+ *   npx tsx scripts/bulkEnqueue.ts --user <id> --account <id> \
+ *     --flow login --count 20 --regions br,de --stagger 250
+ *
+ * --flow names the flow the account runs: "upload" (the default, needs
+ * --video), or any media-less flow the account declares in its credentials
+ * ("login", "scroll", …). --regions names proxy labels: the run goes out
+ * through that proxy for that job — a per-job egress override on one account —
+ * and is tagged with the label so the report can group by region. Without
+ * --regions the jobs use the account's own egress and are untagged.
  */
+
+const UPLOAD_FLOW = 'upload';
+const ONBOARDING_FLOW = 'onboarding';
 
 interface Args {
   userId: string;
+  accountId: string;
+  flowType: string;
+  /** Report grouping label (runProfile); defaults to the flow name. */
   profile: string;
   count: number;
   staggerMs: number;
   regions: string[];
   videoId?: string;
-  accountId?: string;
   caption: string;
   dryRun: boolean;
 }
@@ -55,9 +65,20 @@ function parseArgs(argv: string[]): Args {
     throw new Error('--user <userId> is required');
   }
 
+  const accountId = arg('--account', argv);
+  if (!accountId) {
+    throw new Error('--account <accountId> is required');
+  }
+
+  // --flow is the flow the account runs; --profile is just the report label,
+  // which defaults to the flow so a plain run still groups sensibly.
+  const flowType = arg('--flow', argv) ?? arg('--profile', argv) ?? UPLOAD_FLOW;
+
   return {
     userId,
-    profile: arg('--profile', argv) ?? 'upload',
+    accountId,
+    flowType,
+    profile: arg('--profile', argv) ?? flowType,
     count,
     staggerMs,
     regions: (arg('--regions', argv) ?? '')
@@ -65,7 +86,6 @@ function parseArgs(argv: string[]): Args {
       .map((r) => r.trim())
       .filter(Boolean),
     videoId: arg('--video', argv),
-    accountId: arg('--account', argv),
     caption: arg('--caption', argv) ?? 'load-test {{n}}',
     dryRun: argv.includes('--dry-run'),
   };
@@ -74,32 +94,30 @@ function parseArgs(argv: string[]): Args {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Resolves each region label to an account whose assigned proxy carries it.
- * With no regions given, every job runs on --account and is untagged.
+ * Resolves each region label to a proxy owned by the user, so a job can be
+ * pointed at that egress regardless of which proxy the account uses by default.
+ * With no regions given, every job runs on the account's own egress, untagged.
  */
-async function resolveTargets(args: Args): Promise<Array<{ accountId: string; regionLabel: string | null }>> {
+async function resolveEgressTargets(
+  args: Args,
+): Promise<Array<{ proxyId: string | null; regionLabel: string | null }>> {
   if (args.regions.length === 0) {
-    if (!args.accountId) {
-      throw new Error('Pass either --account <id> or --regions <labels>');
-    }
-    return [{ accountId: args.accountId, regionLabel: null }];
+    return [{ proxyId: null, regionLabel: null }];
   }
 
-  const targets: Array<{ accountId: string; regionLabel: string | null }> = [];
+  const targets: Array<{ proxyId: string | null; regionLabel: string | null }> = [];
 
   for (const label of args.regions) {
-    const account = await prisma.account.findFirst({
-      where: { userId: args.userId, proxy: { label } },
-      select: { id: true, name: true },
+    const proxy = await prisma.proxy.findFirst({
+      where: { userId: args.userId, label },
+      select: { id: true },
     });
 
-    if (!account) {
-      throw new Error(
-        `No account for region "${label}". Assign a proxy labelled "${label}" to an account in the dashboard first.`,
-      );
+    if (!proxy) {
+      throw new Error(`No proxy labelled "${label}". Add it in the dashboard first, then assign the region.`);
     }
 
-    targets.push({ accountId: account.id, regionLabel: label });
+    targets.push({ proxyId: proxy.id, regionLabel: label });
   }
 
   return targets;
@@ -108,15 +126,24 @@ async function resolveTargets(args: Args): Promise<Array<{ accountId: string; re
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
 
-  if (args.profile === 'onboarding' && args.regions.length === 0 && !args.accountId) {
-    throw new Error('--profile onboarding needs --account or --regions');
+  const isUpload = args.flowType === UPLOAD_FLOW;
+  const isOnboarding = args.flowType === ONBOARDING_FLOW;
+
+  if (isUpload && !args.videoId) {
+    throw new Error('--flow upload needs --video <id>');
   }
 
-  const targets = await resolveTargets(args);
+  const targets = isOnboarding
+    ? [{ proxyId: null, regionLabel: null }]
+    : await resolveEgressTargets(args);
+
+  if (isOnboarding && args.regions.length > 0) {
+    console.log('note: --regions is ignored for --flow onboarding; it uses the account\'s own egress.\n');
+  }
 
   console.log(
-    `Plan: ${args.count} × ${args.profile}, stagger ${args.staggerMs}ms, ` +
-      `across ${targets.map((t) => t.regionLabel ?? t.accountId).join(', ')}` +
+    `Plan: ${args.count} × ${args.flowType}, stagger ${args.staggerMs}ms, ` +
+      `across ${targets.map((t) => t.regionLabel ?? '(account egress)').join(', ')}` +
       (args.dryRun ? '  [dry run]' : ''),
   );
 
@@ -130,25 +157,25 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     const idempotencyKey = `${batchId}-${n}`;
 
     if (args.dryRun) {
-      console.log(`  would enqueue ${idempotencyKey} → ${target.regionLabel ?? target.accountId}`);
+      console.log(`  would enqueue ${idempotencyKey} → ${target.regionLabel ?? '(account egress)'}`);
     } else {
       try {
-        if (args.profile === 'onboarding') {
-          await createOnboardingJob({ userId: args.userId, accountId: target.accountId, idempotencyKey });
+        if (isOnboarding) {
+          await createOnboardingJob({ userId: args.userId, accountId: args.accountId, idempotencyKey });
         } else {
-          if (!args.videoId) {
-            throw new Error(`--profile ${args.profile} needs --video <id>`);
-          }
-
-          await createPublishJob({
+          await createFlowJob({
             userId: args.userId,
-            accountId: target.accountId,
-            videoId: args.videoId,
-            caption: args.caption.replace('{{n}}', String(n)),
+            accountId: args.accountId,
+            flowType: args.flowType,
+            // Only the upload flow carries media and a caption; a login or
+            // scroll run leaves both null.
+            videoId: isUpload ? args.videoId : undefined,
+            caption: isUpload ? args.caption.replace('{{n}}', String(n)) : undefined,
             idempotencyKey,
             runProfile: args.profile,
             regionLabel: target.regionLabel,
-            // The whole point of a load test: the same video, many times.
+            proxyId: target.proxyId,
+            // The whole point of a load test: the same flow, many times.
             allowConcurrentDuplicate: true,
           });
         }
