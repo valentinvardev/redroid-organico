@@ -18,7 +18,23 @@ export interface AdbCommandOptions {
    * being broken.
    */
   allowFailure?: boolean;
+  /** Overrides the default budget; a large `push` legitimately takes minutes. */
+  timeoutMs?: number;
 }
+
+/**
+ * Generous, but bounded. Without a limit a wedged transfer holds the job until
+ * the 15-minute job timeout with no indication of what it is waiting on.
+ */
+const DEFAULT_ADB_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * `adb push` reports progress on a carriage-returned line, so a long transfer
+ * emits thousands of updates. Well above what that needs, because exceeding it
+ * kills the process with an error about buffers that says nothing about the
+ * transfer.
+ */
+const ADB_MAX_BUFFER = 64 * 1024 * 1024;
 
 export interface AdbResult {
   stdout: string;
@@ -83,13 +99,20 @@ async function execAdb(
   try {
     const { stdout, stderr } = await execFileAsync(adbCommand, commandArgs, {
       signal: options.signal,
-      maxBuffer: 10 * 1024 * 1024,
+      timeout: options.timeoutMs ?? DEFAULT_ADB_TIMEOUT_MS,
+      maxBuffer: ADB_MAX_BUFFER,
     });
 
     return { stdout: String(stdout).trim(), stderr: String(stderr).trim(), code: 0 };
   } catch (error) {
-    const failure = error as NodeJS.ErrnoException & { code?: number | string; stdout?: string; stderr?: string };
+    const failure = error as NodeJS.ErrnoException & {
+      code?: number | string;
+      stdout?: string;
+      stderr?: string;
+      killed?: boolean;
+    };
     const stderr = String(failure.stderr ?? '').trim();
+    const stdout = String(failure.stdout ?? '').trim();
     const exitCode = typeof failure.code === 'number' ? failure.code : 1;
 
     if (options.signal?.aborted) {
@@ -97,12 +120,27 @@ async function execAdb(
     }
 
     if (options.allowFailure) {
-      return { stdout: String(failure.stdout ?? '').trim(), stderr, code: exitCode };
+      return { stdout, stderr, code: exitCode };
     }
 
+    // adb explains itself on stderr — "No space left on device", "Permission
+    // denied", "closed" — and this used to report only Node's generic "Command
+    // failed", throwing away the one line that says what happened. stdout is
+    // included too because `adb push` reports its failures there.
+    const detail = [
+      failure.killed ? `killed after ${options.timeoutMs ?? DEFAULT_ADB_TIMEOUT_MS}ms` : '',
+      stderr,
+      stdout.split('\n').slice(-3).join('\n'),
+    ]
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(' | ');
+
     throw new AdbError(
-      `ADB command failed (${adbCommand} ${commandArgs.join(' ')}): ${failure.message ?? String(error)}`,
-      { code: exitCode, stderr, cause: error },
+      `ADB command failed (${adbCommand} ${commandArgs.join(' ')}) exit ${exitCode}: ${
+        detail || failure.message || String(error)
+      }`,
+      { code: exitCode, stderr: `${stderr}\n${stdout}`.trim(), cause: error },
     );
   }
 }
@@ -166,7 +204,21 @@ export async function adbPushFile(
   remotePath: string,
   signal?: AbortSignal,
 ) {
-  await execAdb(adbCommand, target, ['push', localPath, remotePath], { signal });
+  // `adb push` exits 0 while printing "adb: error: failed to copy ...", so the
+  // output decides. Out-of-space and permission failures both arrive this way.
+  const { stdout, stderr, code } = await execAdb(adbCommand, target, ['push', localPath, remotePath], {
+    signal,
+    allowFailure: true,
+  });
+
+  const output = `${stdout}\n${stderr}`.trim();
+
+  if (code !== 0 || /error:|failed to copy|No space left|Permission denied|Read-only/i.test(output)) {
+    throw new AdbError(`adb push ${localPath} -> ${remotePath} failed (exit ${code}): ${output}`, {
+      code,
+      stderr: output,
+    });
+  }
 }
 
 export async function adbShell(
