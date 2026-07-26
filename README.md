@@ -116,6 +116,8 @@ Para correrlos en el host con systemd, ver [deploy/](deploy/).
 | `npm run db:seed` | Usuario y cuenta de desarrollo |
 | `npm run db:studio` | Prisma Studio |
 | `npm run user:create` | Crear un usuario o resetear su contraseña |
+| `npm run account:list` | Cuentas con su configuración descifrada, redactada |
+| `npm run account:export` | Las credenciales de una cuenta como JSON reimportable |
 | `npm run keys:rotate` | Re-sellar credenciales con la `CREDENTIALS_KEY` actual |
 
 ## Arquitectura

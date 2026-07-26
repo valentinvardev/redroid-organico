@@ -26,6 +26,8 @@
     "token:list": "tsx scripts/apiToken.ts list",
     "token:revoke": "tsx scripts/apiToken.ts revoke",
     "account:add": "tsx scripts/addAccount.ts",
+    "account:list": "tsx scripts/listAccounts.ts",
+    "account:export": "tsx scripts/exportAccount.ts",
     "gateway:test": "tsx scripts/testGateway.ts",
     "device:egress": "tsx scripts/testDeviceEgress.ts",
     "keys:rotate": "tsx scripts/rotateCredentials.ts"
