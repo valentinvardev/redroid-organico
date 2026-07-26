@@ -6,6 +6,8 @@ interface FakeContainer {
   labels: Record<string, string>;
   running: boolean;
   publishedPort?: number;
+  /** Verbatim `--network` value, so `container:<name>` dependencies are visible. */
+  network?: string;
 }
 
 export interface FakeDockerOptions {
@@ -17,6 +19,8 @@ export interface FakeDockerOptions {
   failRemove?: Error;
   /** The container exits on its own right after starting. */
   exitsImmediately?: boolean;
+  /** Names whose containers exit right after starting, e.g. a gateway with a bad proxy. */
+  exitsImmediatelyByName?: string[];
 }
 
 /** An in-memory Docker daemon: enough to drive the container lifecycle in tests. */
@@ -50,8 +54,11 @@ export class FakeDocker implements DockerClient {
       id: `id-${this.containers.size + 1}`,
       name: spec.name,
       labels: { ...spec.labels },
-      running: !this.options.exitsImmediately,
+      running:
+        !this.options.exitsImmediately &&
+        !(this.options.exitsImmediatelyByName ?? []).includes(spec.name),
       publishedPort: spec.publishContainerPort !== undefined ? this.nextPort++ : undefined,
+      network: spec.network,
     };
 
     this.containers.set(spec.name, container);
@@ -85,10 +92,24 @@ export class FakeDocker implements DockerClient {
 
     const container = this.find(nameOrId);
 
-    if (container) {
-      this.containers.delete(container.name);
-      this.removed.push(container.name);
+    if (!container) {
+      return;
     }
+
+    // Docker's own rule, and the reason teardown is ordered: a container whose
+    // network namespace another one is sharing cannot be removed.
+    const dependant = Array.from(this.containers.values()).find(
+      (other) => other.network === `container:${container.name}`,
+    );
+
+    if (dependant) {
+      throw new Error(
+        `cannot remove container "${container.name}": container ${dependant.name} is using its network namespace`,
+      );
+    }
+
+    this.containers.delete(container.name);
+    this.removed.push(container.name);
   }
 
   async listByLabel(label: string, value: string): Promise<ContainerSummary[]> {
@@ -102,12 +123,13 @@ export class FakeDocker implements DockerClient {
   }
 
   /** Simulates a container that was left behind by a worker that never shut down. */
-  seedOrphan(name: string, labels: Record<string, string>): void {
+  seedOrphan(name: string, labels: Record<string, string>, network?: string): void {
     this.containers.set(name, {
       id: `id-${name}`,
       name,
       labels,
       running: true,
+      network,
     });
   }
 }

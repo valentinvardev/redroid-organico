@@ -59,7 +59,14 @@ function credentials(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function request(overrides: { credentials?: unknown; caption?: string; sizeBytes?: number } = {}): PublishRequest {
+function request(
+  overrides: {
+    credentials?: unknown;
+    caption?: string;
+    sizeBytes?: number;
+    proxy?: PublishRequest['account']['proxy'];
+  } = {},
+): PublishRequest {
   return {
     jobId: 'job-under-test',
     caption: overrides.caption ?? 'Caption from the job',
@@ -69,6 +76,7 @@ function request(overrides: { credentials?: unknown; caption?: string; sizeBytes
       platform: 'SPORT_REELS',
       externalId: null,
       credentials: 'credentials' in overrides ? overrides.credentials : credentials(),
+      proxy: overrides.proxy ?? null,
     },
     video: {
       id: 'video-1',

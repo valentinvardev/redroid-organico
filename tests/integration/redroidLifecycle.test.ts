@@ -3,14 +3,18 @@ import assert from 'node:assert/strict';
 import {
   ACCOUNT_LABEL,
   CREATED_AT_LABEL,
+  DEVICE_ROLE,
+  GATEWAY_ROLE,
   JOB_LABEL,
   OWNER_LABEL,
   OWNER_VALUE,
+  ROLE_LABEL,
 } from '@/lib/android/docker';
 import { EphemeralRedroidProvider, redroidConfigSchema } from '@/lib/android/redroidProvider';
 import { reapAndroidContainers } from '@/lib/android/reaper';
 import { JobStatus } from '@prisma/client';
 import type { AcquireContext } from '@/lib/android/deviceProvider';
+import type { ProxyRuntimeConfig } from '@/lib/proxy/config';
 import { FakeDocker, type FakeDockerOptions } from '../helpers/fakeDocker';
 import { FakeDevice, type FakeDeviceOptions } from '../helpers/fakeAppium';
 
@@ -32,7 +36,14 @@ function context(overrides: Partial<AcquireContext> = {}): AcquireContext {
   };
 }
 
-function provider(options: { docker?: FakeDocker; device?: FakeDeviceOptions; config?: Record<string, unknown> } = {}) {
+function provider(
+  options: {
+    docker?: FakeDocker;
+    device?: FakeDeviceOptions;
+    config?: Record<string, unknown>;
+    proxy?: ProxyRuntimeConfig | null;
+  } = {},
+) {
   const docker = options.docker ?? new FakeDocker();
   const device = new FakeDevice(options.device ?? {});
   const connects: string[] = [];
@@ -42,8 +53,12 @@ function provider(options: { docker?: FakeDocker; device?: FakeDeviceOptions; co
     config: redroidConfigSchema.parse({
       image: 'sportreels/redroid:11',
       startTimeoutSeconds: 2,
+      // Zero, so the gateway's startup watch does not add two seconds of real
+      // time to every test that uses one.
+      proxyGateway: { settleMs: 0 },
       ...options.config,
     }),
+    proxy: options.proxy,
     adbCommand: 'adb',
     adbServer: { host: 'appium', port: 5037 },
     bootTimeoutSeconds: 1,
@@ -216,6 +231,111 @@ describe('EphemeralRedroidProvider', () => {
   });
 });
 
+describe('EphemeralRedroidProvider with a proxy', () => {
+  const proxy: ProxyRuntimeConfig = {
+    type: 'SOCKS5',
+    host: 'gate.example.com',
+    port: 1080,
+    username: 'user',
+    password: 'hunter2',
+  };
+
+  it('puts the device inside the gateway namespace and publishes ADB on the gateway', async () => {
+    const { subject, docker } = provider({ proxy, config: { network: 'redroid-net' } });
+
+    const acquired = await subject.acquire(context());
+
+    const [gateway, device] = docker.runs;
+
+    // Order matters: there is nothing for the device to join otherwise.
+    assert.equal(gateway.name, 'redroid-gw-job-1');
+    assert.equal(device.name, 'redroid-job-job-1');
+
+    assert.deepEqual(gateway.capAdd, ['NET_ADMIN']);
+    assert.deepEqual(gateway.devices, ['/dev/net/tun']);
+    assert.equal(gateway.env?.PROXY, 'socks5://user:hunter2@gate.example.com:1080');
+    assert.equal(gateway.labels[ROLE_LABEL], GATEWAY_ROLE);
+    assert.equal(gateway.labels[JOB_LABEL], 'job-1', 'the reaper collects gateways too');
+    assert.equal(gateway.network, 'redroid-net');
+
+    // The device has no network identity of its own, so it can neither join a
+    // network nor publish a port: both belong to the gateway.
+    assert.equal(device.network, 'container:redroid-gw-job-1');
+    assert.equal(device.publishContainerPort, undefined);
+    assert.equal(gateway.publishContainerPort, 5555);
+    assert.equal(device.labels[ROLE_LABEL], DEVICE_ROLE);
+
+    // And the serial is therefore the gateway's published port, not the
+    // device's — the device does not have one.
+    assert.match(acquired.serial ?? '', /^127\.0\.0\.1:\d+$/);
+
+    await acquired.release();
+  });
+
+  it('addresses the gateway by name when the worker shares a Docker network', async () => {
+    const { subject } = provider({
+      proxy,
+      config: { connectVia: 'container-name', network: 'redroid-net' },
+    });
+
+    const acquired = await subject.acquire(context());
+
+    // The device's own name resolves to nothing: a container in another's
+    // namespace has no network alias.
+    assert.equal(acquired.serial, 'redroid-gw-job-1:5555');
+
+    await acquired.release();
+  });
+
+  it('removes the device before the gateway it borrows the namespace from', async () => {
+    const { subject, docker } = provider({ proxy });
+
+    const acquired = await subject.acquire(context());
+    await acquired.release();
+
+    assert.deepEqual(docker.removed, ['redroid-job-job-1', 'redroid-gw-job-1']);
+    assert.equal(docker.containers.size, 0, 'neither container may survive a release');
+  });
+
+  it('fails the job when the gateway dies on startup instead of running without it', async () => {
+    // tun2socks exits like this on a proxy URL it cannot parse. Continuing
+    // would publish from the host's own address, which is the one outcome an
+    // assigned proxy exists to prevent.
+    const docker = new FakeDocker({ exitsImmediatelyByName: ['redroid-gw-job-1'] });
+    const { subject } = provider({ docker, proxy });
+
+    await assert.rejects(subject.acquire(context()), /exited on startup[\s\S]*fake container logs/);
+
+    assert.equal(docker.containers.size, 0, 'a failed gateway must not be left behind');
+    assert.equal(
+      docker.runs.some((spec) => spec.name === 'redroid-job-job-1'),
+      false,
+      'no Android container may start without its egress',
+    );
+  });
+
+  it('tears the gateway down when the device never becomes usable', async () => {
+    const { subject, docker } = provider({ proxy, device: { bootsWithin: false } });
+
+    await assert.rejects(subject.acquire(context()));
+
+    assert.deepEqual(docker.removed, ['redroid-job-job-1', 'redroid-gw-job-1']);
+    assert.equal(docker.containers.size, 0);
+  });
+
+  it('starts no gateway at all for an account without a proxy', async () => {
+    const { subject, docker } = provider();
+
+    const acquired = await subject.acquire(context());
+
+    assert.equal(docker.runs.length, 1, 'the gateway is only for accounts that have a proxy');
+    assert.equal(docker.runs[0].name, 'redroid-job-job-1');
+    assert.equal(docker.runs[0].capAdd, undefined);
+
+    await acquired.release();
+  });
+});
+
 describe('Android container reaper', () => {
   function orphan(docker: FakeDocker, name: string, jobId: string, ageMs: number) {
     docker.seedOrphan(name, {
@@ -316,6 +436,42 @@ describe('Android container reaper', () => {
     assert.equal(result.failed.length, 1);
     assert.match(result.failed[0].error, /database is down/);
     assert.equal(docker.containers.size, 1, 'killing a possibly-live run is worse than leaking one container');
+  });
+
+  it('collects a device before the gateway it borrows the namespace from', async () => {
+    // In list order the gateway comes first, and removing it would be refused
+    // for as long as the device exists — leaving a gateway behind on every
+    // sweep, forever.
+    const docker = new FakeDocker();
+    const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+
+    docker.seedOrphan('redroid-gw-job-dead', {
+      [OWNER_LABEL]: OWNER_VALUE,
+      [JOB_LABEL]: 'job-dead',
+      [ROLE_LABEL]: GATEWAY_ROLE,
+      [CREATED_AT_LABEL]: stale,
+    });
+
+    docker.seedOrphan(
+      'redroid-job-job-dead',
+      {
+        [OWNER_LABEL]: OWNER_VALUE,
+        [JOB_LABEL]: 'job-dead',
+        [ROLE_LABEL]: DEVICE_ROLE,
+        [CREATED_AT_LABEL]: stale,
+      },
+      'container:redroid-gw-job-dead',
+    );
+
+    const result = await reapAndroidContainers({
+      docker,
+      isJobActive: async () => false,
+      log: () => undefined,
+    });
+
+    assert.deepEqual(result.removed, ['redroid-job-job-dead', 'redroid-gw-job-dead']);
+    assert.equal(docker.containers.size, 0);
+    assert.deepEqual(result.failed, []);
   });
 
   it('never throws when the docker CLI is unusable', async () => {

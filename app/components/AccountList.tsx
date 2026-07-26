@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { OnboardingDialog } from './OnboardingDialog';
+import { ProxyDialog, type ProxySummary } from './ProxyDialog';
 
 interface Account {
   id: string;
@@ -10,6 +11,8 @@ interface Account {
   status: string;
   sessionState: 'NONE' | 'ONBOARDING' | 'VERIFIED' | 'EXPIRED';
   sessionVerifiedAt: string | null;
+  proxyId: string | null;
+  proxy: ProxySummary | null;
 }
 
 const SESSION_COPY: Record<Account['sessionState'], { label: string; tone: string; hint: string }> = {
@@ -22,6 +25,7 @@ const SESSION_COPY: Record<Account['sessionState'], { label: string; tone: strin
 export function AccountList() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [linking, setLinking] = useState<Account | null>(null);
+  const [routing, setRouting] = useState<Account | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -76,6 +80,24 @@ export function AccountList() {
                 </div>
 
                 {/*
+                  The egress is shown on the row rather than behind the dialog:
+                  an account publishing from the server's own datacentre address
+                  is the kind of thing that has to be visible without clicking.
+                */}
+                <button
+                  type="button"
+                  className="ghost account-proxy"
+                  onClick={() => setRouting(account)}
+                  title={
+                    account.proxy
+                      ? `${account.proxy.host}:${account.proxy.port}`
+                      : 'No proxy: traffic leaves through this server'
+                  }
+                >
+                  {account.proxy ? `via ${account.proxy.label}` : 'No proxy'}
+                </button>
+
+                {/*
                   Never disabled on ONBOARDING. That state can be a leftover
                   from a run that died, and the recovery for it runs when this
                   button is pressed — disabling it here made the account
@@ -110,6 +132,16 @@ export function AccountList() {
             // plain fetch, so it needs a nudge that the SSE stream does not give.
             void load();
           }}
+        />
+      ) : null}
+
+      {routing ? (
+        <ProxyDialog
+          accountId={routing.id}
+          accountName={routing.name}
+          currentProxyId={routing.proxyId}
+          onSaved={() => void load()}
+          onClose={() => setRouting(null)}
         />
       ) : null}
     </section>

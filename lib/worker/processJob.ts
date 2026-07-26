@@ -8,6 +8,7 @@ import { getEnv } from '@/lib/env';
 import { jobLogger, type JobLogger } from '@/lib/logging/jobLogger';
 import { getStorage } from '@/lib/media/storage';
 import { clearHumanSignal, waitForHuman } from '@/lib/onboarding/signal';
+import { openProxy } from '@/lib/proxy/service';
 import { isRetryable, permanent, retryAfterMs } from '@/lib/publisher/errors';
 import { getOnboardingDriver, getPublisher } from '@/lib/publisher/registry';
 import type {
@@ -36,7 +37,9 @@ export interface ProcessJobDeps {
   onboardingDriver?: OnboardingDriver;
 }
 
-type JobWithRelations = Prisma.JobGetPayload<{ include: { account: true; video: true } }>;
+type JobWithRelations = Prisma.JobGetPayload<{
+  include: { account: { include: { proxy: true } }; video: true };
+}>;
 
 /**
  * `publisher` and `onboardingDriver` are injectable so integration tests can
@@ -57,7 +60,10 @@ export async function processJob(
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    include: { account: true, video: true },
+    // The proxy comes along with the account: which egress a run uses is
+    // decided by the row, at the moment the job starts, not by anything the
+    // driver is configured with.
+    include: { account: { include: { proxy: true } }, video: true },
   });
 
   if (!job) {
@@ -137,6 +143,7 @@ function publisherAccount(job: JobWithRelations): PublisherAccount {
     platform: job.account.platform,
     externalId: job.account.externalId,
     credentials: job.account.credentials ? openSecret(job.account.credentials) : null,
+    proxy: job.account.proxy ? openProxy(job.account.proxy) : null,
   };
 }
 

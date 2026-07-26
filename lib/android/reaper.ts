@@ -1,6 +1,16 @@
 import { JobStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
-import { CREATED_AT_LABEL, DockerCli, JOB_LABEL, OWNER_LABEL, OWNER_VALUE, type DockerClient } from './docker';
+import {
+  CREATED_AT_LABEL,
+  DockerCli,
+  GATEWAY_ROLE,
+  JOB_LABEL,
+  OWNER_LABEL,
+  OWNER_VALUE,
+  ROLE_LABEL,
+  type ContainerSummary,
+  type DockerClient,
+} from './docker';
 
 /**
  * A container younger than this is left alone even if its job does not look
@@ -36,6 +46,21 @@ const LIVE_STATUSES: JobStatus[] = [
   JobStatus.AWAITING_HUMAN,
   JobStatus.VERIFYING,
 ];
+
+/**
+ * Sweep order, not preference: a device runs inside its gateway's network
+ * namespace, and Docker refuses to remove a container while another one is
+ * still borrowing it. Reaping a pair in list order would leave every gateway
+ * behind, to be retried on each sweep forever.
+ */
+function devicesBeforeGateways(containers: ContainerSummary[]): ContainerSummary[] {
+  const isGateway = (container: ContainerSummary) => container.labels[ROLE_LABEL] === GATEWAY_ROLE;
+
+  return [
+    ...containers.filter((container) => !isGateway(container)),
+    ...containers.filter(isGateway),
+  ];
+}
 
 async function jobIsActive(jobId: string): Promise<boolean> {
   const job = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
@@ -73,7 +98,7 @@ export async function reapAndroidContainers(options: ReapOptions = {}): Promise<
 
   result.inspected = containers.length;
 
-  for (const container of containers) {
+  for (const container of devicesBeforeGateways(containers)) {
     const jobId = container.labels[JOB_LABEL];
     const createdAt = Date.parse(container.labels[CREATED_AT_LABEL] ?? '');
     const age = Number.isFinite(createdAt) ? Date.now() - createdAt : Number.POSITIVE_INFINITY;

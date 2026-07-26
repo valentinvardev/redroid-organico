@@ -24,6 +24,12 @@ const SENSITIVE_KEYS = new Set([
   'api_key',
   'cookie',
   'session',
+  // A proxy config carries a password, and `PROXY=socks5://user:pass@host` is
+  // the whole credential in one string. The deliberate, already-redacted form
+  // is logged under `egress`, so this key is safe to blank unconditionally.
+  'proxy',
+  'proxyurl',
+  'proxy_url',
 ]);
 
 function redact(value: unknown, depth = 0): unknown {

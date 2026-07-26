@@ -146,6 +146,7 @@ POST /api/jobs ────► crear Job (idempotencyKey único) ──► BullM
 | `lib/crypto/` | Cifrado AES-256-GCM de credenciales, con rotación |
 | `lib/jobs/` | Creación, cancelación y reintento de jobs |
 | `lib/media/` | Ingesta, validación contra specs, ffprobe, storage local/S3 |
+| `lib/proxy/` | Validación de proxies, armado de la URL, asignación por cuenta |
 | `lib/publisher/` | Contrato del adaptador, errores clasificados, stub |
 | `lib/queue/` | Conexión a Redis, cola de publicación y dead-letter |
 | `lib/worker/` | Procesador de jobs, rate limiter, creación del worker |
@@ -247,6 +248,7 @@ Clasificación de errores, que es lo que decide si BullMQ reintenta:
 | Selector que nunca aparece | `ui_step_not_found` | **No** |
 | App caída tras el launch | `app_not_running` | **No** |
 | Credenciales/flujo inválidos | `invalid_android_credentials` | **No** |
+| Cuenta con proxy sobre un dispositivo `attached` | `proxy_requires_ephemeral_device` | **No** |
 
 Reintentar un selector equivocado tres veces gasta cinco minutos, informa lo
 mismo, y esconde un defecto real de la app detrás de "intento 3/3".
@@ -349,6 +351,66 @@ La imagen es tuya: ReDroid con `com.sportreels.app` ya instalado. Tiene que
 coincidir con la arquitectura del host — una imagen arm64 en un host x86 no
 arranca, o va a paso de qemu.
 
+#### Salida por proxy
+
+Cada cuenta puede tener un proxy asignado desde el dashboard (HTTP o SOCKS5, con
+usuario y contraseña opcionales). No se configura **nada** dentro de Android: el
+worker levanta un contenedor `tun2socks` por job y arranca el ReDroid dentro de
+**su** namespace de red.
+
+```
+docker run --cap-add NET_ADMIN --device /dev/net/tun \
+           --network redroid-net -p 127.0.0.1::5555 \
+           -e PROXY=socks5://user:pass@gate:1080 \
+           --name redroid-gw-<jobId>  xjasonlyu/tun2socks:v2.5.1
+
+docker run --privileged --network container:redroid-gw-<jobId> \
+           --name redroid-job-<jobId>  <imagen golden>
+```
+
+Por qué así y no un proxy configurado en el sistema Android: el dispositivo no
+tiene ninguna interfaz propia. No hay setting que una app pueda ignorar, ni
+tráfico UDP que se escape del proxy del sistema, ni estado que se pierda cuando
+se restaura la sesión desde el volumen. La única salida es el `tun0` del gateway.
+
+Consecuencias que conviene tener presentes:
+
+- **Los puertos son del gateway.** Un contenedor que comparte namespace no puede
+  publicar nada, así que el 5555 de ADB se publica en el gateway y el serial del
+  dispositivo sale de ahí (`redroid-gw-<jobId>:5555` con `connectVia:
+  "container-name"`).
+- **Falla cerrado.** Si el proxy no responde, los paquetes mueren en el tun; no
+  hay fallback a la IP del host. Un job que no puede usar su proxy falla, que es
+  exactamente para lo que se asigna un proxy.
+- **El orden del teardown importa.** Docker no deja borrar un contenedor mientras
+  otro le presta el namespace: primero el dispositivo, después el gateway. El
+  reaper barre en ese orden por la etiqueta `redroid-organico.role`.
+- **HTTP relaya solo TCP.** Lo que el teléfono mande por UDP —DNS incluido— no
+  tiene por dónde salir. Si el proveedor ofrece las dos, SOCKS5.
+- **Una cuenta con proxy exige contenedor efímero.** Sobre un dispositivo
+  `attached` no hay namespace que apropiarse, así que el job falla con
+  `proxy_requires_ephemeral_device` en vez de publicar desde la IP del host.
+
+La contraseña se guarda cifrada con la misma `CREDENTIALS_KEY` que el resto de
+las credenciales, nunca vuelve por la API y en los logs aparece redactada
+(`socks5://user:***@gate:1080`). El bloque `proxyGateway` de las credenciales
+—imagen, `logLevel`, `env` extra— sólo describe cómo se construye el gateway; el
+proxy en sí vive en la base.
+
+Endpoints, todos bajo la sesión del usuario dueño de la cuenta:
+
+| Ruta | Qué hace |
+| --- | --- |
+| `GET /api/proxies` | Lista los proxies del usuario, con cuántas cuentas usa cada uno |
+| `POST /api/proxies` | Alta, validando formato antes de guardar |
+| `PATCH /api/proxies/:id` | Edición parcial; sin `password` deja la guardada |
+| `DELETE /api/proxies/:id` | 409 si alguna cuenta todavía lo usa |
+| `PUT /api/accounts/:id/proxy` | Asigna (`{"proxyId": "..."}`) o desasigna (`null`) |
+
+El cambio aplica al **próximo** job: un teléfono que ya está corriendo se queda
+con el gateway con el que arrancó, porque mover un contenedor vivo a otro
+namespace de red no es algo que Docker sepa hacer.
+
 #### Preparar el host (esto no es opcional)
 
 Verificado en Ubuntu 26.04 LTS, kernel 7.0.0-aws, Graviton arm64.
@@ -371,6 +433,15 @@ echo 'binder /dev/binderfs binder nofail 0 0' | sudo tee -a /etc/fstab
 El provider monta ese path dentro del contenedor. Se configura con
 `binderfsPath` (default `/dev/binderfs`, `null` para deshabilitarlo en un host
 que sí exponga `/dev/binder`).
+
+**/dev/net/tun.** Sólo hace falta si vas a usar proxies: el gateway crea su tun
+device desde adentro del contenedor y sin ese device no arranca.
+
+```bash
+sudo modprobe tun
+ls -l /dev/net/tun                       # querés que exista
+echo tun | sudo tee /etc/modules-load.d/tun.conf    # que sobreviva reboots
+```
 
 Para confirmar que el kernel sirve:
 

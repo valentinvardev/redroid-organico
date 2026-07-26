@@ -1,15 +1,19 @@
 import { z } from 'zod';
+import type { ProxyRuntimeConfig } from '@/lib/proxy/config';
 import { adbConnect, adbDisconnect, type AdbTarget } from './adb';
 import { AdbDevice, type AndroidDevice } from './device';
 import {
   ACCOUNT_LABEL,
   CREATED_AT_LABEL,
+  DEVICE_ROLE,
   DockerCli,
   JOB_LABEL,
   OWNER_LABEL,
   OWNER_VALUE,
+  ROLE_LABEL,
   type DockerClient,
 } from './docker';
+import { proxyGatewayConfigSchema, startProxyGateway, type RunningGateway } from './proxyGateway';
 import { ensurePackageInstalled, type AcquireContext, type AcquiredDevice, type DeviceProvider } from './deviceProvider';
 
 export const redroidConfigSchema = z.object({
@@ -39,8 +43,20 @@ export const redroidConfigSchema = z.object({
   /** Host that a published port is reachable on. */
   connectHost: z.string().min(1).default('127.0.0.1'),
 
-  /** Passed to `docker run --network`, so an external egress gateway can be joined. */
+  /**
+   * Passed to `docker run --network`. When the account has a proxy this is the
+   * network the *gateway* joins, since the device then lives inside the
+   * gateway's namespace and cannot be given one of its own.
+   */
   network: z.string().min(1).optional(),
+
+  /**
+   * How the per-job tun2socks gateway is built. Unused by accounts with no
+   * proxy. `prefault` rather than `default`: a default is handed straight out
+   * without being parsed, so `{}` would have to spell out every field the inner
+   * schema already has a default for.
+   */
+  proxyGateway: proxyGatewayConfigSchema.prefault({}),
 
   memoryLimit: z.string().min(1).default('4g'),
   width: z.number().int().positive().default(1080),
@@ -80,6 +96,12 @@ export type RedroidConfig = z.infer<typeof redroidConfigSchema>;
 
 export interface RedroidProviderOptions {
   config: RedroidConfig;
+  /**
+   * The account's egress, already decrypted. Present means every job for this
+   * account runs inside a tun2socks namespace; absent means it leaves through
+   * the host's own address.
+   */
+  proxy?: ProxyRuntimeConfig | null;
   /** adb server to route through — normally the one Appium uses. */
   adbCommand: string;
   adbServer?: AdbTarget;
@@ -122,9 +144,10 @@ export class EphemeralRedroidProvider implements DeviceProvider {
   }
 
   async acquire(context: AcquireContext): Promise<AcquiredDevice> {
-    const { config } = this.options;
+    const { config, proxy } = this.options;
     const name = containerName(context.jobId);
     const volume = sessionVolumeName(config, context.accountId);
+    const publishesPort = config.connectVia === 'published-port';
 
     await this.refuseConcurrentRunForAccount(context);
 
@@ -135,46 +158,32 @@ export class EphemeralRedroidProvider implements DeviceProvider {
 
     // A container left over from a previous attempt at the same job would make
     // `docker run` fail on the name. Removing it is safe: the job is being
-    // started now, so nothing can legitimately be using it.
+    // started now, so nothing can legitimately be using it. The device goes
+    // first — Docker refuses to remove a gateway whose network namespace
+    // another container is still borrowing.
     await this.docker.remove(name).catch(() => undefined);
 
-    await context.log.info('Starting ephemeral Android container', {
-      container: name,
-      image: config.image,
-      sessionVolume: volume,
-    });
+    // Started before the device, because the device is placed *inside* its
+    // namespace and there is nothing to join otherwise.
+    const gateway = proxy
+      ? await startProxyGateway({
+          docker: this.docker,
+          proxy,
+          jobId: context.jobId,
+          accountId: context.accountId,
+          config: config.proxyGateway,
+          network: config.network,
+          // Publishing has to happen on whichever container owns the network
+          // stack, and with a gateway that is not the device.
+          publishContainerPort: publishesPort ? 5555 : undefined,
+          log: context.log,
+          signal: context.signal,
+        })
+      : null;
 
-    await this.docker.run(
-      {
-        image: config.image,
-        name,
-        labels: {
-          [OWNER_LABEL]: OWNER_VALUE,
-          [JOB_LABEL]: context.jobId,
-          [ACCOUNT_LABEL]: context.accountId,
-          [CREATED_AT_LABEL]: new Date().toISOString(),
-        },
-        privileged: true,
-        network: config.network,
-        memoryLimit: config.memoryLimit,
-        publishContainerPort: config.connectVia === 'published-port' ? 5555 : undefined,
-        volumes: [
-          { source: volume, target: '/data' },
-          ...(config.binderfsPath
-            ? [{ source: config.binderfsPath, target: '/dev/binderfs' }]
-            : []),
-        ],
-        command: [
-          `androidboot.redroid_width=${config.width}`,
-          `androidboot.redroid_height=${config.height}`,
-          `androidboot.redroid_dpi=${config.dpi}`,
-          `androidboot.redroid_gpu_mode=${config.gpuMode}`,
-          ...(config.useMemfd ? ['androidboot.use_memfd=1'] : []),
-          ...config.extraArgs,
-        ],
-      },
-      { signal: context.signal },
-    );
+    // What the rest of the world addresses. With a gateway the device has no
+    // network identity of its own: no name to resolve, no ports to map.
+    const networkHost = gateway?.name ?? name;
 
     let serial: string | undefined;
 
@@ -200,11 +209,57 @@ export class EphemeralRedroidProvider implements DeviceProvider {
           })
           .catch(() => undefined);
       }
+
+      // Strictly after the device: while the device exists, Docker will not
+      // remove the container it borrows its network namespace from.
+      if (gateway) {
+        await gateway.remove();
+      }
     };
 
     try {
-      serial = await this.resolveSerial(name, context);
-      const device = await this.waitUntilUsable(serial, name, context);
+      await context.log.info('Starting ephemeral Android container', {
+        container: name,
+        image: config.image,
+        sessionVolume: volume,
+        egressGateway: gateway?.name,
+      });
+
+      await this.docker.run(
+        {
+          image: config.image,
+          name,
+          labels: {
+            [OWNER_LABEL]: OWNER_VALUE,
+            [JOB_LABEL]: context.jobId,
+            [ACCOUNT_LABEL]: context.accountId,
+            [ROLE_LABEL]: DEVICE_ROLE,
+            [CREATED_AT_LABEL]: new Date().toISOString(),
+          },
+          privileged: true,
+          network: gateway?.networkMode ?? config.network,
+          memoryLimit: config.memoryLimit,
+          publishContainerPort: publishesPort && !gateway ? 5555 : undefined,
+          volumes: [
+            { source: volume, target: '/data' },
+            ...(config.binderfsPath
+              ? [{ source: config.binderfsPath, target: '/dev/binderfs' }]
+              : []),
+          ],
+          command: [
+            `androidboot.redroid_width=${config.width}`,
+            `androidboot.redroid_height=${config.height}`,
+            `androidboot.redroid_dpi=${config.dpi}`,
+            `androidboot.redroid_gpu_mode=${config.gpuMode}`,
+            ...(config.useMemfd ? ['androidboot.use_memfd=1'] : []),
+            ...config.extraArgs,
+          ],
+        },
+        { signal: context.signal },
+      );
+
+      serial = await this.resolveSerial(networkHost, context);
+      const device = await this.waitUntilUsable(serial, name, gateway, context);
       await ensurePackageInstalled(device, context);
 
       await context.log.info('Android container ready', { container: name, serial });
@@ -215,7 +270,7 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       // means every failure report says "No such container" instead of showing
       // why the container was unhappy — the diagnostic destroyed by the cleanup
       // it was meant to explain.
-      const enriched = await this.enrich(error, name);
+      const enriched = await this.enrich(error, name, gateway);
 
       // Acquisition failed, so nobody downstream will ever call release().
       await release();
@@ -241,8 +296,15 @@ export class EphemeralRedroidProvider implements DeviceProvider {
     }
   }
 
-  private async resolveSerial(name: string, context: AcquireContext): Promise<string> {
+  /**
+   * `host` is the container that owns the network stack: the device normally,
+   * its gateway when there is one. Addressing the device by name in that case
+   * would resolve to nothing — a container in another's namespace has no
+   * network alias of its own.
+   */
+  private async resolveSerial(host: string, context: AcquireContext): Promise<string> {
     const { config } = this.options;
+    const name = host;
 
     if (config.connectVia === 'container-name') {
       return `${name}:5555`;
@@ -278,7 +340,12 @@ export class EphemeralRedroidProvider implements DeviceProvider {
    * booting. Handing a half-booted device to Appium is the classic source of
    * "element not found" runs that have nothing to do with the flow.
    */
-  private async waitUntilUsable(serial: string, name: string, context: AcquireContext): Promise<AndroidDevice> {
+  private async waitUntilUsable(
+    serial: string,
+    name: string,
+    gateway: RunningGateway | null,
+    context: AcquireContext,
+  ): Promise<AndroidDevice> {
     const { config, adbCommand, adbServer, bootTimeoutSeconds } = this.options;
     const connect =
       this.options.connect ??
@@ -293,6 +360,15 @@ export class EphemeralRedroidProvider implements DeviceProvider {
 
       if (!(await this.docker.isRunning(name, { signal: context.signal }))) {
         throw new Error(`Container ${name} stopped while waiting for ADB`);
+      }
+
+      // Checked separately because it fails differently: the device keeps
+      // running with a network namespace that no longer has a route out, so
+      // ADB times out and every explanation points at Android.
+      if (gateway && !(await this.docker.isRunning(gateway.name, { signal: context.signal }))) {
+        throw new Error(
+          `The egress gateway ${gateway.name} stopped while waiting for ADB, so the device has no network`,
+        );
       }
 
       try {
@@ -320,15 +396,29 @@ export class EphemeralRedroidProvider implements DeviceProvider {
     return device;
   }
 
-  /** Container logs are the only explanation when ReDroid refuses to boot. */
-  private async enrich(error: unknown, name: string): Promise<unknown> {
+  /**
+   * Container logs are the only explanation when ReDroid refuses to boot. The
+   * gateway's are included whenever there is one: with the device inside its
+   * namespace, half the ways a run can fail are visible only over there.
+   */
+  private async enrich(error: unknown, name: string, gateway: RunningGateway | null): Promise<unknown> {
     const message = error instanceof Error ? error.message : String(error);
-    const logs = await this.docker.logs(name, 40).catch(() => '');
 
-    if (!logs) {
+    const sections = await Promise.all(
+      [name, gateway?.name]
+        .filter((container): container is string => Boolean(container))
+        .map(async (container) => {
+          const logs = await this.docker.logs(container, 40).catch(() => '');
+          return logs ? `--- last lines of ${container} ---\n${logs}` : '';
+        }),
+    );
+
+    const detail = sections.filter(Boolean).join('\n');
+
+    if (!detail) {
       return error;
     }
 
-    return new Error(`${message}\n--- last lines of ${name} ---\n${logs}`, { cause: error });
+    return new Error(`${message}\n${detail}`, { cause: error });
   }
 }

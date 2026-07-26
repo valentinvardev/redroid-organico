@@ -15,6 +15,16 @@ export const JOB_LABEL = 'redroid-organico.jobId';
 export const ACCOUNT_LABEL = 'redroid-organico.accountId';
 export const CREATED_AT_LABEL = 'redroid-organico.createdAt';
 
+/**
+ * What the container is for. The reaper needs it because the two roles are not
+ * interchangeable at teardown: a device shares its gateway's network namespace,
+ * and Docker refuses to remove a container another one is still borrowing the
+ * namespace of.
+ */
+export const ROLE_LABEL = 'redroid-organico.role';
+export const DEVICE_ROLE = 'device';
+export const GATEWAY_ROLE = 'egress-gateway';
+
 export class DockerError extends Error {
   readonly stderr: string;
 
@@ -66,7 +76,15 @@ export interface RunContainerSpec {
   volumes?: Array<{ source: string; target: string }>;
   env?: Record<string, string>;
   privileged?: boolean;
-  /** Passed straight to `--network`, so an external proxy gateway can be joined later. */
+  /** Linux capabilities to add — `NET_ADMIN` for anything that builds a tun device. */
+  capAdd?: string[];
+  /** Host devices to expose, e.g. `/dev/net/tun`. */
+  devices?: string[];
+  /**
+   * Passed straight to `--network`. Two forms are in use: a network name, and
+   * `container:<name>` to run inside another container's network namespace,
+   * which is how a device is pinned to its proxy gateway.
+   */
   network?: string;
   memoryLimit?: string;
   /** ReDroid takes its configuration as kernel-style command arguments. */
@@ -115,6 +133,14 @@ export class DockerCli implements DockerClient {
 
     if (spec.privileged) {
       args.push('--privileged');
+    }
+
+    for (const capability of spec.capAdd ?? []) {
+      args.push('--cap-add', capability);
+    }
+
+    for (const device of spec.devices ?? []) {
+      args.push('--device', device);
     }
 
     if (spec.network) {

@@ -1,6 +1,7 @@
 import type { Platform } from '@prisma/client';
 import type { JobLogger } from '@/lib/logging/jobLogger';
 import type { HumanOutcome } from '@/lib/onboarding/signal';
+import type { ProxyRuntimeConfig } from '@/lib/proxy/config';
 
 export interface PublisherAccount {
   id: string;
@@ -12,6 +13,13 @@ export interface PublisherAccount {
    * Must never be logged or serialised into a job log.
    */
   credentials: unknown;
+  /**
+   * The account's egress, decrypted alongside the credentials and under the
+   * same rule: the password must never reach a log. Null means the driver may
+   * use the host's own network. A driver that cannot honour a non-null value
+   * must fail rather than run without it.
+   */
+  proxy: ProxyRuntimeConfig | null;
 }
 
 export interface PublisherVideo {

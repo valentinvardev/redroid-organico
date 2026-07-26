@@ -21,6 +21,11 @@ enum AccountStatus {
   NEEDS_REAUTH
 }
 
+enum ProxyType {
+  HTTP
+  SOCKS5
+}
+
 /// Whether the device-side session for this account actually works. Kept apart
 /// from `status`, which is operator intent: an account can be ACTIVE (the
 /// operator wants it used) while its session is NONE (nobody has logged in on
@@ -87,8 +92,45 @@ model User {
   videos   Video[]
   jobs     Job[]
   sessions Session[]
+  proxies  Proxy[]
 
   @@map("users")
+}
+
+/// An egress the worker forces an account's traffic through.
+///
+/// Nothing here is configured inside Android. The worker starts a tun2socks
+/// container per job and puts the ReDroid container in *its* network namespace,
+/// so the device has no interface that bypasses this — an app cannot opt out of
+/// a proxy it cannot see. See lib/android/proxyGateway.ts.
+model Proxy {
+  id     String @id @default(cuid())
+  userId String
+
+  /// What the operator picks it by in the dashboard.
+  label String
+
+  type ProxyType @default(SOCKS5)
+  host String
+  port Int
+
+  username String?
+
+  /// AES-256-GCM envelope, same format and key as Account.credentials: a proxy
+  /// password is a credential like any other, and residential providers bill
+  /// per gigabyte, so a leaked one costs money as well as anonymity. Never
+  /// logged, never returned by the API. See lib/crypto/secretBox.ts.
+  password Bytes?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts Account[]
+
+  @@unique([userId, label])
+  @@index([userId])
+  @@map("proxies")
 }
 
 model Session {
@@ -133,15 +175,27 @@ model Account {
   maxConcurrent      Int @default(1)
   minIntervalSeconds Int @default(60)
 
+  /// Egress for every container this account runs in. Null means the traffic
+  /// leaves through the host's own address, which for a real account is a
+  /// datacentre IP and the fastest way to get it flagged.
+  proxyId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  jobs Job[]
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SetNull rather than Restrict: a database-level Restrict would also fire
+  /// while cascading a user deletion, where the order accounts and proxies are
+  /// removed in is Postgres's business, not ours. Refusing to delete a proxy an
+  /// account still uses belongs in the service — see lib/proxy/service.ts, which
+  /// is the only thing that deletes one.
+  proxy Proxy? @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+  jobs  Job[]
 
   @@unique([userId, platform, externalId])
   @@index([userId])
   @@index([status])
+  @@index([proxyId])
   @@map("accounts")
 }
 

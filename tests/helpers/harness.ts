@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 import { VideoStatus, type Account, type User, type Video } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { seal } from '@/lib/crypto/secretBox';
 import { getEnv } from '@/lib/env';
 import { getRedis } from '@/lib/queue/connection';
 import { getStorage } from '@/lib/media/storage';
@@ -39,7 +40,7 @@ export async function reset(): Promise<void> {
 
   // TRUNCATE ... CASCADE in one statement so foreign keys never block the order.
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "job_logs", "jobs", "videos", "accounts", "sessions", "users" RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE "job_logs", "jobs", "videos", "accounts", "proxies", "sessions", "users" RESTART IDENTITY CASCADE',
   );
 
   await getRedis().flushdb();
@@ -65,6 +66,15 @@ export async function createAccount(
       name: overrides.name ?? 'Test Account',
       platform: 'TIKTOK',
       status: overrides.status ?? 'ACTIVE',
+      // Sealed by default. `createPublishJob` refuses an account with none —
+      // queueing a job that cannot possibly run is not something to discover
+      // inside a worker — and a fixture that skipped this made six suites fail
+      // on a precondition none of them were testing.
+      //
+      // `in` rather than `??` so a test can still ask for an account with no
+      // credentials by passing null explicitly.
+      credentials:
+        'credentials' in overrides ? overrides.credentials : seal({ driver: 'stub', note: 'test fixture' }),
       // Wide open by default so a test that is not about throttling is not
       // accidentally slowed down by it.
       maxConcurrent: overrides.maxConcurrent ?? 10,

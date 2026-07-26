@@ -27,6 +27,7 @@ import {
   type AppiumSessionInfo,
 } from '@/lib/android/appium';
 import { captureEvidence } from '@/lib/android/evidence';
+import { redactProxyUrl, type ProxyRuntimeConfig } from '@/lib/proxy/config';
 import { runUiFlow, uiFlowSchema, type UiFlowResult, UiStepError } from '@/lib/android/uiFlow';
 
 /**
@@ -91,7 +92,7 @@ export type AndroidCredentials = z.infer<typeof androidCredentialsSchema>;
 
 export interface AndroidPublisherDeps {
   /** Injected by tests; production picks a provider from the account's credentials. */
-  createProvider?: (credentials: AndroidCredentials) => DeviceProvider;
+  createProvider?: (credentials: AndroidCredentials, proxy: ProxyRuntimeConfig | null) => DeviceProvider;
 }
 
 function parseCredentials(raw: unknown): AndroidCredentials {
@@ -173,7 +174,10 @@ function viewerUrlFor(serial: string): string | undefined {
   return template.split('{serialDouble}').join(encodeURIComponent(once)).split('{serial}').join(once);
 }
 
-function defaultProvider(credentials: AndroidCredentials): DeviceProvider {
+function defaultProvider(
+  credentials: AndroidCredentials,
+  proxy: ProxyRuntimeConfig | null,
+): DeviceProvider {
   const adbServer =
     credentials.adbHost || credentials.adbPort
       ? { host: credentials.adbHost, port: credentials.adbPort }
@@ -182,10 +186,25 @@ function defaultProvider(credentials: AndroidCredentials): DeviceProvider {
   if (credentials.redroid) {
     return new EphemeralRedroidProvider({
       config: credentials.redroid,
+      proxy,
       adbCommand: credentials.adbCommand,
       adbServer,
       bootTimeoutSeconds: credentials.bootTimeoutSeconds,
     });
+  }
+
+  // An account with a proxy cannot run on a device this system did not create:
+  // the isolation comes from owning the container's network namespace, and
+  // there is no namespace to own here. Refusing is the only honest answer —
+  // running anyway would put the account's traffic on the host's address while
+  // the dashboard shows a proxy next to its name.
+  if (proxy) {
+    throw permanent(
+      'proxy_requires_ephemeral_device',
+      'This account is assigned a proxy, which is enforced by running the device inside a gateway ' +
+        "container's network namespace. That is only possible for containers this worker creates, so " +
+        'the account needs a `redroid` block in its credentials — or no proxy.',
+    );
   }
 
   return new AttachedDeviceProvider({
@@ -272,12 +291,13 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
       );
     }
 
-    const provider = (this.deps.createProvider ?? defaultProvider)(credentials);
+    const provider = (this.deps.createProvider ?? defaultProvider)(credentials, account.proxy);
 
     await log.info('Starting interactive onboarding', {
       accountId: account.id,
       packageName: credentials.packageName,
       provider: provider.kind,
+      egress: account.proxy ? redactProxyUrl(account.proxy) : 'host network',
     });
 
     let acquired: AcquiredDevice | null = null;
@@ -384,13 +404,17 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
 
     await this.assertMediaIsStaged(video);
 
-    const provider = (this.deps.createProvider ?? defaultProvider)(credentials);
+    const provider = (this.deps.createProvider ?? defaultProvider)(credentials, account.proxy);
     const remotePath = uniqueRemotePath(credentials.remoteVideoPath, jobId);
 
     await log.info('Starting Android run', {
       accountId: account.id,
       packageName: credentials.packageName,
       provider: provider.kind,
+      // Recorded per run because the assignment can change between runs, and
+      // "which IP did this publication come from" is the first question asked
+      // when an account gets flagged. Redacted — see redactProxyUrl.
+      egress: account.proxy ? redactProxyUrl(account.proxy) : 'host network',
       remotePath,
       steps: credentials.flow.length,
     });

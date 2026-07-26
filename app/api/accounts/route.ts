@@ -12,6 +12,10 @@ export const GET = guarded(async () => {
   const accounts = await prisma.account.findMany({
     where: { userId },
     orderBy: { createdAt: 'asc' },
+    // The dashboard shows each account's egress next to its session state, so
+    // the assignment travels with the account rather than in a second request
+    // the list would have to join client-side.
+    include: { proxy: true },
   });
 
   return NextResponse.json(accounts.map(serializeAccount));

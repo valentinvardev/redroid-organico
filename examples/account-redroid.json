@@ -18,7 +18,14 @@
     "network": "redroid-net",
     "memoryLimit": "4g",
     "gpuMode": "guest",
-    "startTimeoutSeconds": 240
+    "startTimeoutSeconds": 240,
+
+    "//proxyGateway": "Only used when the account has a proxy assigned in the dashboard. The proxy itself lives in the database, not here — this block is just how the gateway container is built.",
+    "proxyGateway": {
+      "image": "xjasonlyu/tun2socks:v2.5.1",
+      "logLevel": "info",
+      "env": {}
+    }
   },
 
   "flow": [
