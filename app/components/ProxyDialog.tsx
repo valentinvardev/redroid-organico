@@ -337,8 +337,23 @@ export function ProxyDialog({ accountId, accountName, currentProxyId, onSaved, o
 type TestState =
   | { status: 'idle' }
   | { status: 'testing' }
-  | { status: 'ok'; exitIp: string; latencyMs?: number }
+  | {
+      status: 'ok';
+      exitIp: string;
+      latencyMs?: number;
+      country?: string;
+      countryCode?: string;
+      region?: string;
+      city?: string;
+    }
   | { status: 'fail'; error: string };
+
+/** "Berlin, Berlin, Germany" — dropping empty and duplicated parts. */
+function formatLocation(test: Extract<TestState, { status: 'ok' }>): string {
+  const parts = [test.city, test.region, test.country].filter((p): p is string => !!p);
+  // Providers often repeat the city as the region (Berlin/Berlin); collapse it.
+  return parts.filter((part, i) => parts.indexOf(part) === i).join(', ');
+}
 
 function ProxyForm({
   form,
@@ -380,10 +395,27 @@ function ProxyForm({
         }),
       });
 
-      const data = (await response.json()) as { ok: boolean; exitIp?: string; latencyMs?: number; error?: string };
+      const data = (await response.json()) as {
+        ok: boolean;
+        exitIp?: string;
+        latencyMs?: number;
+        country?: string;
+        countryCode?: string;
+        region?: string;
+        city?: string;
+        error?: string;
+      };
 
       if (data.ok && data.exitIp) {
-        setTest({ status: 'ok', exitIp: data.exitIp, latencyMs: data.latencyMs });
+        setTest({
+          status: 'ok',
+          exitIp: data.exitIp,
+          latencyMs: data.latencyMs,
+          country: data.country,
+          countryCode: data.countryCode,
+          region: data.region,
+          city: data.city,
+        });
       } else {
         setTest({ status: 'fail', error: data.error ?? 'The proxy did not respond' });
       }
@@ -515,6 +547,13 @@ function ProxyForm({
       {test.status === 'ok' ? (
         <p className="feedback feedback-ok">
           Working. Exits from <code>{test.exitIp}</code>
+          {formatLocation(test) ? (
+            <>
+              {' '}
+              — {test.countryCode ? `${test.countryCode} · ` : ''}
+              {formatLocation(test)}
+            </>
+          ) : null}
           {test.latencyMs !== undefined ? ` · ${test.latencyMs}ms` : ''}
         </p>
       ) : null}

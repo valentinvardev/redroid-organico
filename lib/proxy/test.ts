@@ -15,13 +15,29 @@ import { proxyUrl, type ProxyRuntimeConfig } from './config';
  * is bad credentials or an unreachable host, and this catches those in seconds.
  */
 
-const IP_ECHO = 'https://api.ipify.org?format=json';
+// One call does both: this returns the caller's IP *and* its geolocation, so
+// there is no second round trip and the location is the exit's, not the host's.
+const IP_LOOKUP = 'https://ipwho.is/';
 
 export interface ProxyTestResult {
   ok: boolean;
   exitIp?: string;
+  country?: string;
+  countryCode?: string;
+  region?: string;
+  city?: string;
   latencyMs?: number;
   error?: string;
+}
+
+interface IpWhoResponse {
+  success?: boolean;
+  ip?: string;
+  country?: string;
+  country_code?: string;
+  region?: string;
+  city?: string;
+  message?: string;
 }
 
 function humanize(error: NodeJS.ErrnoException): string {
@@ -60,7 +76,7 @@ export async function testProxy(config: ProxyRuntimeConfig, timeoutMs = 12_000):
   const started = Date.now();
 
   return new Promise((resolve) => {
-    const request = https.get(IP_ECHO, { agent, timeout: timeoutMs }, (response) => {
+    const request = https.get(IP_LOOKUP, { agent, timeout: timeoutMs }, (response) => {
       if (response.statusCode !== 200) {
         response.resume();
         resolve({ ok: false, error: `The check service answered ${response.statusCode} through the proxy.` });
@@ -72,11 +88,23 @@ export async function testProxy(config: ProxyRuntimeConfig, timeoutMs = 12_000):
       response.on('data', (chunk) => (body += chunk));
       response.on('end', () => {
         try {
-          const ip = (JSON.parse(body) as { ip?: string }).ip;
-          if (typeof ip === 'string' && ip.length > 0) {
-            resolve({ ok: true, exitIp: ip, latencyMs: Date.now() - started });
+          const data = JSON.parse(body) as IpWhoResponse;
+
+          // ipwho.is answers 200 with success:false for rate limits and the
+          // like — the address, if any, is still the real exit, so report it
+          // and just leave the location blank.
+          if (typeof data.ip === 'string' && data.ip.length > 0) {
+            resolve({
+              ok: true,
+              exitIp: data.ip,
+              country: data.country || undefined,
+              countryCode: data.country_code || undefined,
+              region: data.region || undefined,
+              city: data.city || undefined,
+              latencyMs: Date.now() - started,
+            });
           } else {
-            resolve({ ok: false, error: 'The check service returned no address.' });
+            resolve({ ok: false, error: data.message || 'The check service returned no address.' });
           }
         } catch {
           resolve({ ok: false, error: 'Unexpected response from the check service.' });
