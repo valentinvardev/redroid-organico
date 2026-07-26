@@ -14,6 +14,9 @@
 # the only record of what the app was showing when the step failed.
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARSER="$HERE/parse-ui-dump.py"
+
 ARTIFACT=""
 SERIAL=""
 MODE=""
@@ -37,63 +40,22 @@ done
 
 if [[ -n "$ARTIFACT" ]]; then
   echo "artifact: $ARTIFACT" >&2
-  XML="$(cat "$ARTIFACT")"
-else
-  if [[ -z "$SERIAL" ]]; then
-    SERIAL="$(adb devices | awk '/redroid-job/ && /device$/ {print $1; exit}')"
-  fi
-
-  if [[ -z "$SERIAL" ]]; then
-    echo "No redroid-job-* device attached. Start a run, pass a serial, or use --artifact." >&2
-    adb devices >&2
-    exit 1
-  fi
-
-  echo "device: $SERIAL" >&2
-  XML="$(adb -s "$SERIAL" exec-out uiautomator dump /dev/tty 2>/dev/null | tr -d '\r')"
+  # Piped rather than fed through a here-string alongside the parser: two stdin
+  # redirections on one command and the last one wins, which fed the XML to
+  # python as its own source code.
+  cat "$ARTIFACT" | python3 "$PARSER" $MODE
+  exit
 fi
 
-[[ -n "$XML" ]] || { echo "Nothing to read." >&2; exit 1; }
+if [[ -z "$SERIAL" ]]; then
+  SERIAL="$(adb devices | awk '/redroid-job/ && /device$/ {print $1; exit}')"
+fi
 
-MODE="$MODE" python3 - <<'PY' <<<"$XML"
-import os, re, sys
+if [[ -z "$SERIAL" ]]; then
+  echo "No redroid-job-* device attached. Start a run, pass a serial, or use --artifact." >&2
+  adb devices >&2
+  exit 1
+fi
 
-xml = sys.stdin.read()
-show_all = os.environ.get('MODE') == '--all'
-
-rows = []
-for node in re.findall(r'<node\b[^>]*>', xml):
-    def attr(name):
-        m = re.search(rf'{name}="([^"]*)"', node)
-        return m.group(1) if m else ''
-
-    rid, text, desc = attr('resource-id'), attr('text'), attr('content-desc')
-    klass, clickable = attr('class').split('.')[-1], attr('clickable') == 'true'
-
-    # A node with no id, no text and no description cannot be targeted, and a
-    # node nobody can touch is rarely what a flow is waiting for.
-    if not show_all and not (rid or text or desc):
-        continue
-    if not show_all and not clickable and not text and not rid:
-        continue
-
-    rows.append((rid, text, desc, klass, 'tap' if clickable else ''))
-
-if not rows:
-    print('Nothing targetable on screen.', file=sys.stderr)
-    sys.exit(1)
-
-header = ('resource-id', 'text', 'content-desc', 'class', '')
-widths = [min(60, max(len(r[i]) for r in rows + [header])) for i in range(5)]
-
-def line(cols):
-    return '  '.join(c[:60].ljust(w) for c, w in zip(cols, widths))
-
-print(line(header))
-print('  '.join('-' * w for w in widths))
-for row in rows:
-    print(line(row))
-
-print(f'\n{len(rows)} targetable nodes.', file=sys.stderr)
-print('resource-id -> using "id"; content-desc -> using "accessibility id".', file=sys.stderr)
-PY
+echo "device: $SERIAL" >&2
+adb -s "$SERIAL" exec-out uiautomator dump /dev/tty 2>/dev/null | tr -d '\r' | python3 "$PARSER" $MODE
