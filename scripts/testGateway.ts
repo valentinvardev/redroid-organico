@@ -81,9 +81,17 @@ async function main(): Promise<void> {
     const logs = await docker(['logs', '--tail', '30', GATEWAY]);
     console.log((logs.stdout + logs.stderr).trim() || '    (no output)');
 
-    console.log('\n==> routing table inside the namespace (is default via tun?)');
+    console.log('\n==> main routing table (is default via tun?)');
     const route = await docker(['exec', GATEWAY, 'ip', 'route']);
     console.log(route.stdout.trim() || route.stderr.trim() || '    (no ip in image)');
+
+    console.log('\n==> policy rules (does fwmark 0x22b have a bypass?)');
+    const rules = await docker(['exec', GATEWAY, 'ip', 'rule']);
+    console.log(rules.stdout.trim() || rules.stderr.trim() || '    (none)');
+
+    console.log('\n==> every route table');
+    const allRoutes = await docker(['exec', GATEWAY, 'ip', 'route', 'show', 'table', 'all']);
+    console.log(allRoutes.stdout.trim() || allRoutes.stderr.trim() || '    (none)');
 
     console.log('\n==> exit IP of a container INSIDE the gateway namespace');
     console.log('    (this is the test — an Android device sees exactly this)');
