@@ -52,6 +52,15 @@ async function main(): Promise<void> {
   }
 
   const runtime = openProxy(proxy);
+
+  // --as http|socks5 tries the same host, port and credentials as a different
+  // proxy type without touching the stored row. An HTTP proxy cannot tunnel
+  // arbitrary TCP through tun2socks (it resets anything that is not a 443
+  // CONNECT); most providers serve SOCKS5 on the same endpoint, which can.
+  const asType = arg('--as');
+  if (asType === 'http') runtime.type = 'HTTP';
+  if (asType === 'socks5') runtime.type = 'SOCKS5';
+
   const url = proxyUrl(runtime);
 
   console.log(`\nGateway diagnostic for: ${redactProxyUrl(runtime)}\n`);
