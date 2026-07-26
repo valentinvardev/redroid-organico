@@ -134,6 +134,33 @@ function parseCredentials(raw: unknown): AndroidCredentials {
  *
  * Empty template means no screen bridge is wired up; the job still runs.
  */
+/**
+ * A remote path nothing has used before.
+ *
+ * MediaStore keeps a row per file under /sdcard, and a delete performed outside
+ * MediaProvider — `adb shell rm`, or a container torn down mid-run — removes
+ * the file and leaves the row behind. Creating that same path again then fails
+ * with "remote couldn't create file: Operation not permitted", in a directory
+ * that accepts any other name perfectly well. Since /sdcard lives inside the
+ * persisted session volume, a single interrupted run would otherwise poison
+ * that path for every future job on the account.
+ *
+ * Nothing depends on the name: the flow picks the most recent item in the
+ * gallery, and `{{remoteVideoPath}}` resolves to whatever this returns.
+ */
+export function uniqueRemotePath(configured: string, jobId: string): string {
+  if (configured.includes('{jobId}')) {
+    return configured.split('{jobId}').join(jobId);
+  }
+
+  const slash = configured.lastIndexOf('/');
+  const dot = configured.lastIndexOf('.');
+
+  return dot > slash
+    ? `${configured.slice(0, dot)}-${jobId}${configured.slice(dot)}`
+    : `${configured}-${jobId}`;
+}
+
 function viewerUrlFor(serial: string): string | undefined {
   const template = getEnv().DEVICE_VIEWER_URL_TEMPLATE;
 
@@ -358,7 +385,7 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
     await this.assertMediaIsStaged(video);
 
     const provider = (this.deps.createProvider ?? defaultProvider)(credentials);
-    const remotePath = credentials.remoteVideoPath;
+    const remotePath = uniqueRemotePath(credentials.remoteVideoPath, jobId);
 
     await log.info('Starting Android run', {
       accountId: account.id,
@@ -375,7 +402,7 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
     try {
       acquired = await this.acquire(provider, credentials, account.id, jobId, log, signal);
 
-      await this.stageMedia(acquired.device, credentials, video.localPath, video.sizeBytes, log, signal);
+      await this.stageMedia(acquired.device, remotePath, video.localPath, video.sizeBytes, log, signal);
       mediaPushed = true;
 
       session = await this.startSession(credentials, acquired.serial, signal);
@@ -479,32 +506,29 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
 
   private async stageMedia(
     device: AndroidDevice,
-    credentials: AndroidCredentials,
+    remotePath: string,
     localPath: string,
     expectedBytes: number,
     log: PublishRequest['log'],
     signal: AbortSignal,
   ): Promise<void> {
-    const remoteSize = await device.pushMedia(localPath, credentials.remoteVideoPath, signal);
+    const remoteSize = await device.pushMedia(localPath, remotePath, signal);
 
     // Verifying the push is what stops a silently truncated transfer from
     // becoming a mysterious failure four steps into the flow.
     if (remoteSize === null) {
-      throw transient(
-        'media_push_missing',
-        `Pushed ${credentials.remoteVideoPath} but the device reports no such file`,
-      );
+      throw transient('media_push_missing', `Pushed ${remotePath} but the device reports no such file`);
     }
 
     if (remoteSize !== expectedBytes) {
       throw transient(
         'media_push_truncated',
-        `Pushed ${expectedBytes} bytes but the device reports ${remoteSize} at ${credentials.remoteVideoPath}`,
+        `Pushed ${expectedBytes} bytes but the device reports ${remoteSize} at ${remotePath}`,
       );
     }
 
-    await device.scanMedia(credentials.remoteVideoPath, signal);
-    await log.debug('Media staged on device', { remotePath: credentials.remoteVideoPath, bytes: remoteSize });
+    await device.scanMedia(remotePath, signal);
+    await log.debug('Media staged on device', { remotePath, bytes: remoteSize });
   }
 
   private async startSession(

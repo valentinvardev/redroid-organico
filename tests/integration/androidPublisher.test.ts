@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { PublishRequest } from '@/lib/publisher/types';
-import { AndroidPublisher } from '@/lib/publisher/android';
+import { AndroidPublisher, uniqueRemotePath } from '@/lib/publisher/android';
 import { PublishError } from '@/lib/publisher/errors';
 import { FakeAppium, FakeDevice, FakeDeviceProvider, type FakeDeviceOptions } from '../helpers/fakeAppium';
 
@@ -132,7 +132,7 @@ describe('AndroidPublisher', () => {
     // missing field and not an earlier problem.
     assert.equal(appium.clicks.length, 1);
     // Cleanup still ran despite the failure.
-    assert.deepEqual(device.removed, ['/sdcard/DCIM/upload.mp4']);
+    assert.deepEqual(device.removed, ['/sdcard/DCIM/upload-job-under-test.mp4']);
     assert.equal(provider.released, 1, 'the device must be released even when the flow fails');
   });
 
@@ -161,6 +161,29 @@ describe('AndroidPublisher', () => {
     assert.equal(error.code, 'app_not_installed');
     assert.equal(error.retryable, false);
     assert.equal(provider.released, 0, 'acquisition failed, so there is nothing to release');
+  });
+
+  it('never reuses a remote path, because MediaStore remembers deleted ones', async () => {
+    assert.equal(
+      uniqueRemotePath('/sdcard/DCIM/upload.mp4', 'job-1'),
+      '/sdcard/DCIM/upload-job-1.mp4',
+      'the job id goes before the extension so the file stays a .mp4',
+    );
+
+    assert.equal(
+      uniqueRemotePath('/sdcard/Movies/{jobId}.mp4', 'job-1'),
+      '/sdcard/Movies/job-1.mp4',
+      'an explicit placeholder wins over the automatic suffix',
+    );
+
+    assert.equal(
+      uniqueRemotePath('/sdcard/DCIM/upload', 'job-1'),
+      '/sdcard/DCIM/upload-job-1',
+      'a path with no extension still gets a unique name',
+    );
+
+    // A dot in a directory name is not an extension.
+    assert.equal(uniqueRemotePath('/sdcard/my.files/upload', 'job-1'), '/sdcard/my.files/upload-job-1');
   });
 
   it('refuses a flow that asserts nothing', async () => {
@@ -198,8 +221,8 @@ describe('AndroidPublisher', () => {
     assert.equal(result.externalPostId, 'upload-9f2c');
     assert.equal(appium.typed[before].text, 'Hola desde el worker', 'the caption placeholder must be interpolated');
     assert.deepEqual(device.launches, [{ packageName: 'com.sportreels.app', activityName: undefined }]);
-    assert.deepEqual(device.scanned, ['/sdcard/DCIM/upload.mp4']);
-    assert.deepEqual(device.removed, ['/sdcard/DCIM/upload.mp4']);
+    assert.deepEqual(device.scanned, ['/sdcard/DCIM/upload-job-under-test.mp4']);
+    assert.deepEqual(device.removed, ['/sdcard/DCIM/upload-job-under-test.mp4']);
   });
 
   it('waits for an element that is slow to appear rather than failing at once', async () => {
