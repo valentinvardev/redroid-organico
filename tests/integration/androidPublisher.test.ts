@@ -231,6 +231,20 @@ describe('AndroidPublisher', () => {
     assert.deepEqual(device.launches, [{ packageName: 'com.sportreels.app', activityName: undefined }]);
     assert.deepEqual(device.scanned, ['/sdcard/DCIM/upload-job-under-test.mp4']);
     assert.deepEqual(device.removed, ['/sdcard/DCIM/upload-job-under-test.mp4']);
+
+    // The load-test report reads these: one timing per executed step, a total,
+    // and the step names, so a latency breakdown is available per run.
+    assert.ok(result.metrics, 'a successful run must report metrics');
+    assert.equal(result.metrics?.steps.length, 4, 'one timing per step in the flow');
+    assert.deepEqual(
+      result.metrics?.steps.map((s) => s.name),
+      ['open composer', 'write caption', 'submit', 'upload confirmed'],
+    );
+    assert.equal(
+      result.metrics?.totalMs,
+      result.metrics?.steps.reduce((sum, s) => sum + s.ms, 0),
+      'totalMs is the sum of the step timings',
+    );
   });
 
   it('waits for an element that is slow to appear rather than failing at once', async () => {

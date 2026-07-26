@@ -64,6 +64,9 @@ export function serializeJob(
   return {
     id: job.id,
     type: job.type,
+    runProfile: job.runProfile,
+    regionLabel: job.regionLabel,
+    metrics: job.metrics ?? null,
     // Needed by the dashboard to reattach a reloaded tab to the linking session
     // that is already running for an account.
     accountId: job.accountId,

@@ -105,10 +105,21 @@ export class UiStepError extends Error {
   }
 }
 
+export interface StepTiming {
+  name: string;
+  action: UiStep['action'];
+  ms: number;
+  skipped: boolean;
+}
+
 export interface UiFlowResult {
   executed: string[];
   skipped: string[];
   capturedText?: string;
+  /** Wall-clock duration of each step, in order — the raw material for latency reports. */
+  timings: StepTiming[];
+  /** Sum of the step timings, so a caller does not have to re-add them. */
+  totalMs: number;
 }
 
 /**
@@ -160,10 +171,21 @@ export async function runUiFlow(
 ): Promise<UiFlowResult> {
   const executed: string[] = [];
   const skipped: string[] = [];
+  const timings: StepTiming[] = [];
   let capturedText: string | undefined;
+
+  // Recorded even for a step that throws, so a failed run still reports how long
+  // it spent getting to the failure — the timing of the step that broke is
+  // often the most interesting number in the whole run.
+  let stepStart = Date.now();
+  const record = (step: UiStep, wasSkipped: boolean) => {
+    timings.push({ name: step.name, action: step.action, ms: Date.now() - stepStart, skipped: wasSkipped });
+    (wasSkipped ? skipped : executed).push(step.name);
+  };
 
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index];
+    stepStart = Date.now();
 
     if (signal.aborted) {
       throw new Error(`Cancelled before step ${index + 1} (${step.name})`);
@@ -174,7 +196,7 @@ export async function runUiFlow(
     if (step.action === 'wait') {
       await log.debug(`Step ${position}: ${step.name} — waiting ${step.ms}ms`);
       await delay(step.ms, signal);
-      executed.push(step.name);
+      record(step, false);
       continue;
     }
 
@@ -197,7 +219,7 @@ export async function runUiFlow(
         );
       }
 
-      executed.push(step.name);
+      record(step, false);
       continue;
     }
 
@@ -213,7 +235,7 @@ export async function runUiFlow(
           using: step.using,
           value: locator,
         });
-        skipped.push(step.name);
+        record(step, true);
         continue;
       }
 
@@ -260,8 +282,9 @@ export async function runUiFlow(
       );
     }
 
-    executed.push(step.name);
+    record(step, false);
   }
 
-  return { executed, skipped, capturedText };
+  const totalMs = timings.reduce((sum, timing) => sum + timing.ms, 0);
+  return { executed, skipped, capturedText, timings, totalMs };
 }

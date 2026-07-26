@@ -201,6 +201,9 @@ async function runPublish(
         completedAt: new Date(),
         externalPostId: result.externalPostId,
         errorMessage: null,
+        // Only overwrite when the driver measured; a driver that reports no
+        // metrics should not blank a value the enqueuer may have pre-seeded.
+        ...(result.metrics ? { metrics: result.metrics as Prisma.InputJsonValue } : {}),
       },
     });
 

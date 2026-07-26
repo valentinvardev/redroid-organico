@@ -32,6 +32,18 @@ export interface CreatePublishJobInput {
    */
   idempotencyKey?: string;
   scheduledAt?: Date | null;
+
+  /** Load-test tags, recorded on the row for the run report. Null for ordinary jobs. */
+  runProfile?: string | null;
+  regionLabel?: string | null;
+
+  /**
+   * Skips the "this video is already in flight for this account" guard, which
+   * exists to stop a double-click from double-publishing. A load test does the
+   * opposite on purpose — the same video, many times — so it opts out
+   * explicitly rather than the guard being quietly weakened for everyone.
+   */
+  allowConcurrentDuplicate?: boolean;
 }
 
 export interface CreatePublishJobResult {
@@ -109,7 +121,7 @@ export async function createPublishJob(input: CreatePublishJobInput): Promise<Cr
     },
   });
 
-  if (inFlight) {
+  if (inFlight && !input.allowConcurrentDuplicate) {
     throw new JobConflictError(
       `Video ${video.id} is already ${inFlight.status.toLowerCase()} for this account`,
       inFlight.id,
@@ -130,6 +142,8 @@ export async function createPublishJob(input: CreatePublishJobInput): Promise<Cr
         idempotencyKey,
         status: scheduled ? JobStatus.SCHEDULED : JobStatus.QUEUED,
         scheduledAt: scheduled ? input.scheduledAt : null,
+        runProfile: input.runProfile ?? null,
+        regionLabel: input.regionLabel ?? null,
       },
     });
   } catch (error) {

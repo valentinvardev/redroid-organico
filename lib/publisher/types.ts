@@ -44,9 +44,18 @@ export interface PublishRequest {
   signal: AbortSignal;
 }
 
+/** Per-step and total durations, plus whatever a driver wants to attach for a run report. */
+export interface RunMetrics {
+  totalMs: number;
+  steps: Array<{ name: string; action: string; ms: number; skipped: boolean }>;
+  [key: string]: unknown;
+}
+
 export interface PublishResult {
   externalPostId: string;
   url?: string;
+  /** Timing breakdown for the load-test reports; absent for drivers that do not measure. */
+  metrics?: RunMetrics;
 }
 
 export interface Publisher {

@@ -594,11 +594,24 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
       executed: result.executed,
       skipped: result.skipped,
       capturedText: result.capturedText,
+      totalMs: result.totalMs,
+      timings: result.timings,
       screenshotKey: evidence.screenshotKey,
       pageSourceKey: evidence.pageSourceKey,
     });
 
-    return { externalPostId: result.capturedText ?? `android_${jobId}` };
+    return {
+      externalPostId: result.capturedText ?? `android_${jobId}`,
+      metrics: {
+        totalMs: result.totalMs,
+        steps: result.timings.map((timing) => ({
+          name: timing.name,
+          action: timing.action,
+          ms: timing.ms,
+          skipped: timing.skipped,
+        })),
+      },
+    };
   }
 
   private async recordFailure(

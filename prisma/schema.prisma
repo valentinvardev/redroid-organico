@@ -279,6 +279,15 @@ model Job {
   externalPostId String?
   errorMessage   String?  @db.Text
 
+  /// Load-test bookkeeping, all set by the bulk enqueuer and null for an
+  /// ordinary job. `runProfile` groups results by which flow was exercised,
+  /// `regionLabel` by which egress it went out through, and `metrics` holds the
+  /// per-step timing the report aggregates. Plain columns, not a log, so a
+  /// report is `groupBy` rather than parsing.
+  runProfile  String?
+  regionLabel String?
+  metrics     Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -293,6 +302,8 @@ model Job {
   @@index([scheduledAt])
   /// Drives the sweep that expires abandoned interactive jobs.
   @@index([status, expiresAt])
+  /// Groups a load-test batch when the report aggregates by region and profile.
+  @@index([regionLabel, runProfile])
   @@map("jobs")
 }
 

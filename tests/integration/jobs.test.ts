@@ -116,6 +116,29 @@ describe('job creation', () => {
     assert.equal(await prisma.job.count(), 1);
   });
 
+  it('allows the same video many times when the caller opts in, for load testing', async () => {
+    const { user, account, video } = await seedFixture();
+
+    for (let n = 0; n < 3; n += 1) {
+      const { created } = await createPublishJob({
+        userId: user.id,
+        accountId: account.id,
+        videoId: video.id,
+        caption: `load ${n}`,
+        idempotencyKey: randomUUID(),
+        allowConcurrentDuplicate: true,
+        runProfile: 'upload',
+        regionLabel: 'de',
+      });
+      assert.equal(created, true);
+    }
+
+    assert.equal(await prisma.job.count(), 3, 'the in-flight guard is bypassed on request');
+
+    const tagged = await prisma.job.findMany({ where: { runProfile: 'upload', regionLabel: 'de' } });
+    assert.equal(tagged.length, 3, 'the load-test tags are recorded on the row');
+  });
+
   it('refuses a video that has not passed validation', async () => {
     const user = await createUser();
     const account = await createAccount(user.id);
