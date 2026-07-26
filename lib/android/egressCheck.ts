@@ -43,6 +43,55 @@ export class EgressUnreachableError extends Error {
 
 const IP_PATTERN = /^[0-9a-f.:]{3,45}$/i;
 
+/**
+ * Where a probe binary supplied by the operator is put.
+ *
+ * /data rather than /system: it is a runtime mount, so nothing here survives a
+ * `docker commit` — but it *is* the account's session volume, which means the
+ * copy is made once per account and then persists, exactly like the APK the
+ * provider installs for the same reason. /system would need `adb remount`,
+ * which an image with verity refuses.
+ */
+export const PUSHED_PROBE = '/data/local/tmp/redroid-probe';
+
+/**
+ * Puts the operator's static curl on the device when it is not already there.
+ *
+ * Idempotent by asking the device rather than remembering: the session volume
+ * outlives the container, so on every run after the first this costs one adb
+ * round trip and no transfer.
+ */
+export async function ensureProbeBinary(
+  device: AndroidDevice,
+  localPath: string,
+  log: JobLogger,
+  signal: AbortSignal,
+): Promise<void> {
+  const present = await device.probe([PUSHED_PROBE, '--version'], signal).catch(() => null);
+
+  if (present?.code === 0) {
+    return;
+  }
+
+  await log.info('Copying the egress probe onto the device', { from: localPath, to: PUSHED_PROBE });
+
+  await device.pushFile(localPath, PUSHED_PROBE, signal);
+  await device.probe(['chmod', '755', PUSHED_PROBE], signal);
+
+  const check = await device.probe([PUSHED_PROBE, '--version'], signal);
+
+  if (check.code !== 0) {
+    // Nearly always a dynamically linked binary or the wrong architecture, and
+    // the message says so because "exit 127" on its own sends people looking
+    // for a missing file that is right there.
+    throw new EgressUnreachableError(
+      `${localPath} was copied to ${PUSHED_PROBE} but does not run there: ` +
+        `${`${check.stdout} ${check.stderr}`.trim().slice(0, 200) || `exit ${check.code}`}. ` +
+        'It has to be statically linked and built for the device architecture (arm64 on Graviton).',
+    );
+  }
+}
+
 /** `host:port:address`, the shape curl's --resolve takes. */
 function resolveSpec(url: string, address: string): string {
   const parsed = new URL(url);
@@ -105,6 +154,17 @@ export async function deviceEgressIp(
   resolvedAddress?: string | null,
 ): Promise<string> {
   const attempts: string[][] = [
+    // The copy this system put there, first: an AOSP image ships no HTTP client
+    // at all — no curl, and a toybox built without the wget applet — so on a
+    // stock golden image this is the only one that exists.
+    [
+      PUSHED_PROBE,
+      '-sL',
+      '--max-time',
+      String(timeoutSeconds),
+      ...(resolvedAddress ? ['--resolve', `${resolveSpec(url, resolvedAddress)}`] : []),
+      url,
+    ],
     [
       'curl',
       // -L because a plain-HTTP endpoint may redirect to TLS.
@@ -155,16 +215,22 @@ export async function deviceEgressIp(
     failures.push(`${command[0]}: exit ${result.code}${detail ? ` — ${detail}` : ''}`);
   }
 
+  // The two failures look nothing alike and lead in opposite directions, so the
+  // message commits to whichever actually happened instead of listing both.
+  const everyToolMissing = failures.every((failure) => failure.includes('exit 127'));
+
   throw new EgressUnreachableError(
     `The device could not fetch ${url}. Tried: ${failures.join('; ')}. ` +
-      'A timeout on every tool usually means the tunnel is swallowing the packets rather than the ' +
-      'tools being absent. Read the gateway log below before anything else: "connection not allowed ' +
-      'by ruleset" is the proxy refusing this destination — residential providers block public DNS ' +
-      'resolvers and odd ports as a matter of course — and the fix is another egressCheck.url, not ' +
-      'another routing rule. ' +
-      'If the tools really are missing, bake one into the golden image ' +
-      '(scripts/build-golden-image.sh --tool) or turn the check off with ' +
-      'proxyGateway.egressCheck.enabled=false.',
+      (everyToolMissing
+        ? 'Nothing answered because the device has no HTTP client — a stock AOSP image ships neither ' +
+          'curl nor a toybox with the wget applet, and this says nothing about the proxy. Point ' +
+          'proxyGateway.egressCheck.probeBinary at a statically linked curl for the device ' +
+          'architecture and it will be copied to the device once per account, or turn the check off ' +
+          'with proxyGateway.egressCheck.enabled=false.'
+        : 'A timeout on every tool means the tunnel is swallowing the packets. Read the gateway log ' +
+          'below before anything else: "connection not allowed by ruleset" is the proxy refusing ' +
+          'this destination — residential providers block public DNS resolvers and odd ports as a ' +
+          'matter of course — and the fix is another egressCheck.url, not another routing rule.'),
   );
 }
 

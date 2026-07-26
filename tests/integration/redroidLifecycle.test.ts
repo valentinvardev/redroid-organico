@@ -424,7 +424,8 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     // and does not survive a SOCKS5 proxy with no UDP ASSOCIATE. And not an IP
     // literal either — the well-known ones are public resolvers, which a
     // residential provider refuses to relay to.
-    assert.deepEqual(device.probes[0], [
+    // [0] is the pushed probe, tried first and absent here.
+    assert.deepEqual(device.probes[1], [
       'curl',
       '-sL',
       '--max-time',
@@ -446,8 +447,8 @@ describe('EphemeralRedroidProvider with a proxy', () => {
 
     assert.deepEqual(
       device.probes.map((probe) => probe[0]),
-      ['curl', 'toybox'],
-      'curl first, then the tool an AOSP image actually ships',
+      ['/data/local/tmp/redroid-probe', 'curl', 'toybox'],
+      'the copied probe, then curl, then the applet an AOSP image sometimes ships',
     );
 
     await acquired.release();
@@ -495,6 +496,39 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     await assert.rejects(subject.acquire(context()), /gateway can \(203\.0\.113\.7\), so the proxy works/);
 
     assert.equal(docker.containers.size, 0);
+  });
+
+  it('copies a probe binary onto the device when the image ships no HTTP client', async () => {
+    // A stock AOSP image has neither curl nor a toybox with wget, so without
+    // this the check cannot run at all on a golden image nobody prepared.
+    const { subject, device } = provider({
+      proxy,
+      // Nothing at all, which is what a stock image looks like.
+      device: { egressTools: [], egressIp: '203.0.113.7' },
+      config: {
+        proxyGateway: { settleMs: 0, egressCheck: { probeBinary: '/srv/bin/curl-arm64' } },
+      },
+    });
+
+    const acquired = await subject.acquire(context());
+
+    assert.deepEqual(device.pushes, [
+      { localPath: '/srv/bin/curl-arm64', remotePath: '/data/local/tmp/redroid-probe' },
+    ]);
+
+    // Asked first, so a session volume that already has it costs one round trip
+    // and no transfer.
+    assert.deepEqual(device.probes[0], ['/data/local/tmp/redroid-probe', '--version']);
+
+    await acquired.release();
+  });
+
+  it('blames the image, not the tunnel, when every tool is simply absent', async () => {
+    // exit 127 everywhere and a timeout everywhere are opposite diagnoses, and
+    // the message used to give the tunnel speech for both.
+    const { subject } = provider({ proxy, device: { egressTools: [] } });
+
+    await assert.rejects(subject.acquire(context()), /the device has no HTTP client/);
   });
 
   it('carries the namespace’s state in the error when nothing at all answers', async () => {

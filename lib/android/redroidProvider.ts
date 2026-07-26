@@ -15,7 +15,7 @@ import {
 } from './docker';
 import { proxyGatewayConfigSchema, startProxyGateway, type RunningGateway } from './proxyGateway';
 import { applyEgressPolicy, policyFromEnv, resolveProxyEndpoints } from './egressPolicy';
-import { assertProxiedEgress, egressCheckHost } from './egressCheck';
+import { assertProxiedEgress, egressCheckHost, ensureProbeBinary } from './egressCheck';
 import { ensurePackageInstalled, type AcquireContext, type AcquiredDevice, type DeviceProvider } from './deviceProvider';
 
 export const redroidConfigSchema = z.object({
@@ -355,6 +355,10 @@ export class EphemeralRedroidProvider implements DeviceProvider {
     if (!proxyGateway.egressCheck.enabled) {
       await context.log.warn('Egress check disabled; nothing has verified where this device exits');
       return;
+    }
+
+    if (proxyGateway.egressCheck.probeBinary) {
+      await ensureProbeBinary(device, proxyGateway.egressCheck.probeBinary, context.log, context.signal);
     }
 
     // Resolved here so the device never has to: DNS is UDP and does not survive

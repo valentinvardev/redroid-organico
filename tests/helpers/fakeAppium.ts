@@ -288,6 +288,10 @@ export class FakeDevice implements AndroidDevice {
     this.removed.push(remotePath);
   }
 
+  async pushFile(localPath: string, remotePath: string): Promise<void> {
+    this.pushes.push({ localPath, remotePath });
+  }
+
   /**
    * Answers as a device with `curl` and no `wget` unless told otherwise, which
    * is what a golden image built with `--tool curl` looks like.
@@ -298,7 +302,18 @@ export class FakeDevice implements AndroidDevice {
   ): Promise<{ stdout: string; stderr: string; code: number }> {
     this.probes.push(args);
 
-    const tools = this.options.egressTools ?? ['curl'];
+    // chmod and the like always work; only the fetch tools are interesting.
+    if (args[0] === 'chmod') {
+      return { stdout: '', stderr: '', code: 0 };
+    }
+
+    // What the image ships, plus anything this run copied over — so a probe
+    // binary is missing until it is pushed, which is the state the push exists
+    // to fix.
+    const tools = [
+      ...(this.options.egressTools ?? ['curl']),
+      ...this.pushes.map((push) => push.remotePath),
+    ];
 
     if (!tools.includes(args[0])) {
       return { stdout: '', stderr: `${args[0]}: inaccessible or not found`, code: 127 };

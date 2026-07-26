@@ -34,6 +34,11 @@ export interface AndroidDevice {
   isPackageInstalled(packageName: string, signal?: AbortSignal): Promise<boolean>;
   /** Installs an APK from the worker's filesystem onto the device. */
   installPackage(localApkPath: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Copies a file to the device as-is. Unlike `pushMedia` there is no
+   * MediaStore involved — this is for putting a tool somewhere executable.
+   */
+  pushFile(localPath: string, remotePath: string, signal?: AbortSignal): Promise<void>;
   removeFile(remotePath: string, signal?: AbortSignal): Promise<void>;
   /**
    * Runs a command on the device and reports how it went, without throwing:
@@ -185,6 +190,10 @@ export class AdbDevice implements AndroidDevice {
 
   async removeFile(remotePath: string, signal?: AbortSignal): Promise<void> {
     await adbRemoveFile(this.adbCommand, this.target, remotePath, signal);
+  }
+
+  async pushFile(localPath: string, remotePath: string, signal?: AbortSignal): Promise<void> {
+    await adbPushFile(this.adbCommand, this.target, localPath, remotePath, signal);
   }
 
   async probe(args: string[], signal?: AbortSignal): Promise<AdbResult> {

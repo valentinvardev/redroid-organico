@@ -99,6 +99,20 @@ export const proxyGatewayConfigSchema = z.object({
        */
       url: z.string().url().default('http://api.ipify.org'),
       timeoutSeconds: z.number().int().positive().max(120).default(20),
+
+      /**
+       * A statically linked curl on the worker's filesystem, for the device's
+       * architecture. Copied to the device the first time an account runs and
+       * kept in its session volume after that.
+       *
+       * Needed because a stock AOSP image has no HTTP client at all: no curl,
+       * and a toybox built without the wget applet. Same reason the APK is
+       * installed at runtime rather than baked in — /data is a runtime mount
+       * that `docker commit` never captures.
+       *
+       * Get one from https://github.com/moparisthebest/static-curl (aarch64).
+       */
+      probeBinary: z.string().min(1).optional(),
     })
     .prefault({}),
 });

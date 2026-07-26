@@ -468,10 +468,19 @@ antes de que el flujo toque la app. La comparación es contra la IP **directa**,
 no contra la del proxy, porque un residencial rotativo entrega un exit distinto
 por conexión y compararlo contra el proxy daría falsos positivos todo el día.
 
-El check corre `curl` en el dispositivo y cae a `toybox wget` si no está. AOSP no
-trae curl: se hornea en la golden image con `--tool`, y tiene que ir a
-`/system/bin` porque `/data` es un mount de runtime que `docker commit` nunca
-captura.
+El check necesita un cliente HTTP en el dispositivo, y **una imagen AOSP no trae
+ninguno**: ni curl, ni un toybox con el applet `wget`. Apuntá `probeBinary` a un
+curl estático para la arquitectura del device y el worker lo copia solo, una vez
+por cuenta:
+
+```json
+"egressCheck": { "probeBinary": "/srv/redroid/curl-aarch64" }
+```
+
+Va a `/data/local/tmp`, que es el volumen de sesión de la cuenta: se copia en el
+primer run y persiste, igual que el APK y por el mismo motivo. `/system` haría
+falta `adb remount`, que una imagen con verity rechaza. Binarios estáticos en
+https://github.com/moparisthebest/static-curl.
 
 ```bash
 ./scripts/build-golden-image.sh --apk app.apk --tag mi/redroid:golden \
