@@ -27,6 +27,7 @@
     "token:revoke": "tsx scripts/apiToken.ts revoke",
     "account:add": "tsx scripts/addAccount.ts",
     "gateway:test": "tsx scripts/testGateway.ts",
+    "device:egress": "tsx scripts/testDeviceEgress.ts",
     "keys:rotate": "tsx scripts/rotateCredentials.ts"
   },
   "prisma": {
