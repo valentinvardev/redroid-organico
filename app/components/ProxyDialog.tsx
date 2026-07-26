@@ -297,6 +297,7 @@ export function ProxyDialog({ accountId, accountName, currentProxyId, onSaved, o
           {editing ? (
             <ProxyForm
               form={editing.form}
+              editingId={editing.id}
               isNew={editing.id === null}
               issues={issues}
               busy={busy}
@@ -333,8 +334,15 @@ export function ProxyDialog({ accountId, accountName, currentProxyId, onSaved, o
   );
 }
 
+type TestState =
+  | { status: 'idle' }
+  | { status: 'testing' }
+  | { status: 'ok'; exitIp: string; latencyMs?: number }
+  | { status: 'fail'; error: string };
+
 function ProxyForm({
   form,
+  editingId,
   isNew,
   issues,
   busy,
@@ -343,6 +351,7 @@ function ProxyForm({
   onCancel,
 }: {
   form: FormState;
+  editingId: string | null;
   isNew: boolean;
   issues: string[];
   busy: boolean;
@@ -351,6 +360,37 @@ function ProxyForm({
   onCancel(): void;
 }) {
   const set = (patch: Partial<FormState>) => onChange({ ...form, ...patch });
+  const [test, setTest] = useState<TestState>({ status: 'idle' });
+
+  async function runTest() {
+    setTest({ status: 'testing' });
+
+    try {
+      const response = await fetch('/api/proxies/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: form.type,
+          host: form.host,
+          port: form.port,
+          username: form.username,
+          password: form.password,
+          // Lets the server fall back to the stored password when editing.
+          proxyId: editingId,
+        }),
+      });
+
+      const data = (await response.json()) as { ok: boolean; exitIp?: string; latencyMs?: number; error?: string };
+
+      if (data.ok && data.exitIp) {
+        setTest({ status: 'ok', exitIp: data.exitIp, latencyMs: data.latencyMs });
+      } else {
+        setTest({ status: 'fail', error: data.error ?? 'The proxy did not respond' });
+      }
+    } catch {
+      setTest({ status: 'fail', error: 'Could not reach the server to run the test' });
+    }
+  }
 
   /**
    * Providers hand out `socks5://user:pass@host:1080` or `host:1080:user:pass`.
@@ -472,9 +512,25 @@ function ProxyForm({
         </p>
       ) : null}
 
+      {test.status === 'ok' ? (
+        <p className="feedback feedback-ok">
+          Working. Exits from <code>{test.exitIp}</code>
+          {test.latencyMs !== undefined ? ` · ${test.latencyMs}ms` : ''}
+        </p>
+      ) : null}
+      {test.status === 'fail' ? <p className="feedback feedback-error">{test.error}</p> : null}
+
       <div className="actions">
         <button type="submit" className="primary" disabled={busy}>
           {isNew ? 'Add proxy' : 'Save changes'}
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={busy || test.status === 'testing' || !form.host || !form.port}
+          onClick={() => void runTest()}
+        >
+          {test.status === 'testing' ? 'Testing…' : 'Test'}
         </button>
         <button type="button" className="ghost" disabled={busy} onClick={onCancel}>
           Cancel

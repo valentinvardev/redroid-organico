@@ -96,8 +96,8 @@ const optionalSecret = z
     return text.length === 0 ? null : text;
   });
 
-const proxyFieldsSchema = z.object({
-  label: z.string().trim().min(1, 'Give the proxy a name').max(60),
+/** Everything needed to reach a proxy, minus the label that only names it. */
+export const proxyConnectionSchema = z.object({
   type: z.enum(PROXY_TYPES),
   host: z.string().trim().toLowerCase().min(1, 'Host is required').max(255).superRefine(checkHost),
   port: z.coerce
@@ -111,6 +111,10 @@ const proxyFieldsSchema = z.object({
   // Deliberately not trimmed: a password may legitimately end in a space, and
   // silently changing it produces an authentication failure nobody can see.
   password: optionalSecret,
+});
+
+const proxyFieldsSchema = proxyConnectionSchema.extend({
+  label: z.string().trim().min(1, 'Give the proxy a name').max(60),
 });
 
 export const proxyInputSchema = proxyFieldsSchema.superRefine((proxy, ctx) => {
