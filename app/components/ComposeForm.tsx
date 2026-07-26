@@ -8,6 +8,8 @@ interface AccountOption {
   name: string;
   platform: string;
   status: string;
+  /** False for the seeded development account, which cannot run a job. */
+  hasCredentials: boolean;
 }
 
 interface UploadedVideo {
@@ -50,7 +52,10 @@ export function ComposeForm() {
       .then((response) => response.json())
       .then((data: AccountOption[]) => {
         setAccounts(data);
-        setAccountId((current) => current || data[0]?.id || '');
+        // Default to one that can actually run. The seeded development account
+        // sorts first and has no credentials, so the obvious default was the
+        // one guaranteed to fail — several minutes later, inside the worker.
+        setAccountId((current) => current || data.find((a) => a.hasCredentials)?.id || '');
       })
       .catch(() => setFeedback({ kind: 'error', text: 'Could not load accounts' }));
   }, []);
@@ -189,8 +194,9 @@ export function ComposeForm() {
         <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
           {accounts.length === 0 ? <option value="">No accounts configured</option> : null}
           {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
+            <option key={account.id} value={account.id} disabled={!account.hasCredentials}>
               {account.name} · {account.platform}
+              {account.hasCredentials ? '' : ' — not configured'}
             </option>
           ))}
         </select>

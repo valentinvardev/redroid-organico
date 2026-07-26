@@ -76,6 +76,16 @@ export async function createPublishJob(input: CreatePublishJobInput): Promise<Cr
     throw new JobValidationError(`Account ${account.name} is ${account.status.toLowerCase()}`);
   }
 
+  // Refused here rather than in the worker. Without credentials the job is
+  // guaranteed to fail, but only after booting a container and installing an
+  // app — minutes of work to reach a conclusion available now.
+  if (!account.credentials) {
+    throw new JobValidationError(
+      `Account ${account.name} has no credentials, so nothing tells the worker which app to drive. ` +
+        'Configure it with `npm run account:add`.',
+    );
+  }
+
   if (!video) {
     throw new JobValidationError(`Video ${input.videoId} not found`);
   }
