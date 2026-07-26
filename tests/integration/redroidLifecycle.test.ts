@@ -533,6 +533,33 @@ describe('egress policy script', () => {
     assert.match(script, /iptables -C OUTPUT -j REDROID_EGRESS 2>\/dev\/null \|\| iptables -I OUTPUT 1/);
   });
 
+  it('survives a kernel without the mangle table instead of failing the job', () => {
+    // Netfilter tables belong to the host kernel, and Docker only ever loads
+    // filter and nat. A host that never modprobed iptable_mangle answers "Table
+    // does not exist" — which used to abort the whole script under `set -eu`,
+    // taking the ACL down with it and killing every proxied job.
+    const script = egressPolicyScript(policyFromEnv({}, ['172.30.0.0/16']));
+
+    assert.match(script, /if iptables -t mangle -S >\/dev\/null 2>&1; then/);
+    assert.match(script, /echo "WARN: no mangle table/);
+    assert.match(script, /modprobe iptable_mangle/);
+
+    // The layers that actually enforce must stay outside the guard.
+    const guarded = script.slice(script.indexOf('if iptables -t mangle'), script.indexOf('fi'));
+    assert.equal(guarded.includes('REDROID_EGRESS'), false, 'the ACL must not depend on mangle');
+    assert.equal(guarded.includes('ip rule add'), false, 'the routing rules must not depend on mangle');
+  });
+
+  it('still denies when the kernel has no REJECT target', () => {
+    const script = egressPolicyScript(policyFromEnv({}, []));
+
+    assert.match(
+      script,
+      /-j REJECT --reject-with icmp-admin-prohibited 2>\/dev\/null \|\| iptables -A REDROID_EGRESS -j DROP/,
+      'a missing REJECT module must degrade to DROP, never to letting the packet out',
+    );
+  });
+
   it('opens nothing when there is no control network to name', () => {
     const script = egressPolicyScript(policyFromEnv({}, []));
 

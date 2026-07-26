@@ -510,14 +510,25 @@ El provider monta ese path dentro del contenedor. Se configura con
 `binderfsPath` (default `/dev/binderfs`, `null` para deshabilitarlo en un host
 que sí exponga `/dev/binder`).
 
-**/dev/net/tun.** Sólo hace falta si vas a usar proxies: el gateway crea su tun
-device desde adentro del contenedor y sin ese device no arranca.
+**/dev/net/tun y iptable_mangle.** Los dos sólo hacen falta si vas a usar
+proxies. El gateway crea su tun device desde adentro del contenedor y sin ese
+device no arranca; y las tablas de netfilter viven en el kernel del **host**, no
+en el contenedor, así que un host que nunca cargó `iptable_mangle` le contesta
+`Table does not exist` por más NET_ADMIN que tenga. Docker sólo carga `filter` y
+`nat` para lo suyo.
 
 ```bash
 sudo modprobe tun
+sudo modprobe iptable_mangle
 ls -l /dev/net/tun                       # querés que exista
-echo tun | sudo tee /etc/modules-load.d/tun.conf    # que sobreviva reboots
+
+# Que sobrevivan reboots:
+printf 'tun\niptable_mangle\n' | sudo tee /etc/modules-load.d/redroid.conf
 ```
+
+Sin `iptable_mangle` el job **no falla**: la capa 2 se saltea con un `WARN` en el
+log y quedan la 1 y la 3, que son las que enforcen. Pero perdés defensa en
+profundidad por una línea, así que cargalo.
 
 Para confirmar que el kernel sirve:
 

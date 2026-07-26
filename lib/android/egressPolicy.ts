@@ -98,7 +98,23 @@ export function egressPolicyScript(policy: EgressPolicy): string {
 
     // Layer 2 — clear netd's per-socket mark. Changing the mark in mangle
     // OUTPUT makes the kernel re-run the route lookup, which is the point.
-    `iptables -t mangle -C OUTPUT ${mangleRule} 2>/dev/null || iptables -t mangle -A OUTPUT ${mangleRule}`,
+    //
+    // Guarded on the table existing at all. Netfilter tables live in the host
+    // kernel, not in the container: a host that never loaded `iptable_mangle`
+    // answers "Table does not exist" no matter what capabilities the container
+    // has, and Docker only ever loads `filter` and `nat` for its own use.
+    //
+    // Degrading instead of failing is deliberate. Layer 1 already sends every
+    // packet to the tun table whatever its mark, and layer 3 rejects anything
+    // that still tries to leave another way — this layer only defends against a
+    // rule at a priority we did not anticipate. Losing it is worth a warning,
+    // not a dead job.
+    `if iptables -t mangle -S >/dev/null 2>&1; then`,
+    `  iptables -t mangle -C OUTPUT ${mangleRule} 2>/dev/null || iptables -t mangle -A OUTPUT ${mangleRule}`,
+    `else`,
+    `  echo "WARN: no mangle table in this kernel, so netd's socket marks are not being cleared." \\`,
+    `       "Run: sudo modprobe iptable_mangle  (and add it to /etc/modules-load.d/)"`,
+    `fi`,
 
     // Layer 3 — the ACL. Nothing below this line depends on routing being right.
     `iptables -N ${CHAIN} 2>/dev/null || iptables -F ${CHAIN}`,
@@ -111,8 +127,11 @@ export function egressPolicyScript(policy: EgressPolicy): string {
     `iptables -A ${CHAIN} -m mark --mark ${mark}/0xffff -j ACCEPT`,
     ...policy.controlSubnets.map((subnet) => `iptables -A ${CHAIN} -d ${subnet} -j ACCEPT`),
     // REJECT, not DROP: a leak should fail in milliseconds and be visible in a
-    // log, not hang for two minutes looking like a slow network.
-    `iptables -A ${CHAIN} -j REJECT --reject-with icmp-admin-prohibited`,
+    // log, not hang for two minutes looking like a slow network. The fallback
+    // is for the same reason as the mangle guard — the REJECT target is another
+    // module a thin kernel may not have — and it keeps the guarantee, because
+    // what matters here is the denial, not how politely it is delivered.
+    `iptables -A ${CHAIN} -j REJECT --reject-with icmp-admin-prohibited 2>/dev/null || iptables -A ${CHAIN} -j DROP`,
     `iptables -C OUTPUT -j ${CHAIN} 2>/dev/null || iptables -I OUTPUT 1 -j ${CHAIN}`,
   ].join('\n');
 }
@@ -134,8 +153,10 @@ export async function applyEgressPolicy(options: ApplyPolicyOptions): Promise<vo
     controlSubnets: policy.controlSubnets,
   });
 
+  let output: string;
+
   try {
-    await docker.exec(gatewayName, ['sh', '-c', egressPolicyScript(policy)], { signal });
+    output = await docker.exec(gatewayName, ['sh', '-c', egressPolicyScript(policy)], { signal });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
 
@@ -144,6 +165,17 @@ export async function applyEgressPolicy(options: ApplyPolicyOptions): Promise<vo
         `Android's own routing, which sends its traffic out of eth0 regardless of the proxy: ${message}`,
       { cause },
     );
+  }
+
+  // A layer that could not be applied has to reach the operator. The script
+  // exits 0 in that case by design, so the only evidence is what it printed.
+  const warnings = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('WARN:'));
+
+  if (warnings.length > 0) {
+    await log.warn('The namespace was pinned, but with a weaker policy than intended', { warnings });
   }
 
   // Cheap, and the only record of what the namespace actually looked like when
