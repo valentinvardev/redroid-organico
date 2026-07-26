@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from 'crypto';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import type { User } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { SESSION_COOKIE } from './cookie';
+import { bearerFromHeader, resolveApiToken } from './apiToken';
 
 export { SESSION_COOKIE };
 
@@ -42,6 +43,15 @@ export interface SessionUser {
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
+  // A bearer token identifies a caller explicitly, so it is checked before the
+  // ambient cookie — and before the dev shortcut, so a request that presents a
+  // token is never silently answered as the seeded user instead. This is what
+  // lets another server drive the same API the dashboard uses.
+  const bearer = bearerFromHeader(headers().get('authorization'));
+  if (bearer) {
+    return resolveApiToken(bearer);
+  }
+
   const token = cookies().get(SESSION_COOKIE)?.value;
 
   if (token) {

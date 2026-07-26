@@ -88,13 +88,40 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  accounts Account[]
-  videos   Video[]
-  jobs     Job[]
-  sessions Session[]
-  proxies  Proxy[]
+  accounts  Account[]
+  videos    Video[]
+  jobs      Job[]
+  sessions  Session[]
+  proxies   Proxy[]
+  apiTokens ApiToken[]
 
   @@map("users")
+}
+
+/// A bearer token for server-to-server access, so another service can drive the
+/// same API the dashboard uses without a browser session.
+///
+/// Same discipline as Session: only the SHA-256 of the token is stored, so a
+/// dump of this table cannot be replayed. The raw token is shown once, at
+/// creation, and never again.
+model ApiToken {
+  id     String @id @default(cuid())
+  userId String
+
+  /// What the operator calls it — "staging site", "ops script".
+  name String
+
+  /// SHA-256 of the raw token; the token itself is never stored.
+  tokenHash  String    @unique
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_tokens")
 }
 
 /// An egress the worker forces an account's traffic through.
