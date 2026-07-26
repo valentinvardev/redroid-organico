@@ -531,6 +531,16 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     await assert.rejects(subject.acquire(context()), /the device has no HTTP client/);
   });
 
+  it('says whether a probe was even configured, since it lives in the credentials', async () => {
+    // The distinction cost a round trip to work out from the outside: a
+    // configured probe that failed to arrive and no probe at all produce the
+    // same list of 127s, and the second is fixed by rewriting the account, not
+    // by restarting anything.
+    const { subject } = provider({ proxy, device: { egressTools: [] } });
+
+    await assert.rejects(subject.acquire(context()), /has no proxyGateway.egressCheck.probeBinary/);
+  });
+
   it('carries the namespace’s state in the error when nothing at all answers', async () => {
     // The containers are destroyed in a `finally`, so anything not captured
     // here is gone by the time someone reads the failure. Counters on the ACL

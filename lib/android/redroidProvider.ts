@@ -377,6 +377,7 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       timeoutSeconds: proxyGateway.egressCheck.timeoutSeconds,
       resolveDirectIp: this.options.resolveDirectIp,
       resolvedAddress: resolved[0]?.address ?? null,
+      probeBinary: proxyGateway.egressCheck.probeBinary ?? null,
       log: context.log,
       signal: context.signal,
     });

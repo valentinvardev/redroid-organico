@@ -152,6 +152,8 @@ export async function deviceEgressIp(
    * public resolvers, which residential providers block on principle.
    */
   resolvedAddress?: string | null,
+  /** What the account configured, so the failure can say which case this is. */
+  probeBinary?: string | null,
 ): Promise<string> {
   const attempts: string[][] = [
     // The copy this system put there, first: an AOSP image ships no HTTP client
@@ -223,10 +225,15 @@ export async function deviceEgressIp(
     `The device could not fetch ${url}. Tried: ${failures.join('; ')}. ` +
       (everyToolMissing
         ? 'Nothing answered because the device has no HTTP client — a stock AOSP image ships neither ' +
-          'curl nor a toybox with the wget applet, and this says nothing about the proxy. Point ' +
-          'proxyGateway.egressCheck.probeBinary at a statically linked curl for the device ' +
-          'architecture and it will be copied to the device once per account, or turn the check off ' +
-          'with proxyGateway.egressCheck.enabled=false.'
+          'curl nor a toybox with the wget applet, and this says nothing about the proxy. ' +
+          (probeBinary
+            ? `This account points probeBinary at ${probeBinary}, so that copy should have been made: ` +
+              'check the worker can read that path.'
+            : 'This account has no proxyGateway.egressCheck.probeBinary configured — note that it ' +
+              'lives in the encrypted credentials, so setting it means rewriting the account with ' +
+              '`npm run account:add -- --account <id> --credentials-file <file>`, not restarting the ' +
+              'worker.') +
+          ' Or turn the check off with proxyGateway.egressCheck.enabled=false.'
         : 'A timeout on every tool means the tunnel is swallowing the packets. Read the gateway log ' +
           'below before anything else: "connection not allowed by ruleset" is the proxy refusing ' +
           'this destination — residential providers block public DNS resolvers and odd ports as a ' +
@@ -336,6 +343,8 @@ export interface EgressCheckOptions {
   resolveDirectIp?: () => Promise<string | null>;
   /** The endpoint's host, resolved worker-side so the device needs no DNS. */
   resolvedAddress?: string | null;
+  /** What the account configured, so a failure can say which case it is. */
+  probeBinary?: string | null;
 }
 
 export async function assertProxiedEgress(options: EgressCheckOptions): Promise<string> {
@@ -344,7 +353,14 @@ export async function assertProxiedEgress(options: EgressCheckOptions): Promise<
   let deviceIp: string;
 
   try {
-    deviceIp = await deviceEgressIp(device, url, timeoutSeconds, signal, options.resolvedAddress);
+    deviceIp = await deviceEgressIp(
+      device,
+      url,
+      timeoutSeconds,
+      signal,
+      options.resolvedAddress,
+      options.probeBinary,
+    );
   } catch (error) {
     // Ask the gateway the same question, purely to name the culprit.
     const fromGateway = await gatewayEgressIp(docker, gatewayName, url, timeoutSeconds, signal);
