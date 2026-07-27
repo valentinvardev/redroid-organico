@@ -34,6 +34,8 @@ export function serializeProxy(proxy: Proxy & { _count?: { accounts: number } })
     port: proxy.port,
     username: proxy.username,
     hasPassword: proxy.password !== null,
+    timezone: proxy.timezone,
+    locale: proxy.locale,
     accountCount: proxy._count?.accounts,
     createdAt: proxy.createdAt.toISOString(),
   };

@@ -16,6 +16,7 @@ import {
 import { proxyGatewayConfigSchema, startProxyGateway, type RunningGateway } from './proxyGateway';
 import { applyEgressPolicy, policyFromEnv, resolveProxyEndpoints } from './egressPolicy';
 import { assertProxiedEgress, egressCheckHost, ensureProbeBinary } from './egressCheck';
+import { alignDeviceToEgress } from './devicePersona';
 import { ensurePackageInstalled, type AcquireContext, type AcquiredDevice, type DeviceProvider } from './deviceProvider';
 
 export const redroidConfigSchema = z.object({
@@ -208,6 +209,7 @@ export class EphemeralRedroidProvider implements DeviceProvider {
     const networkHost = gateway?.name ?? name;
 
     let serial: string | undefined;
+    let egressIp: string | undefined;
 
     const release = async () => {
       if (serial) {
@@ -288,14 +290,14 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       // Doing it after `ensurePackageInstalled` would mean downloading an APK
       // through a route that may not be the proxy's.
       if (gateway && proxy) {
-        await this.pinEgress(gateway, proxy, device, context);
+        egressIp = await this.pinEgress(gateway, proxy, device, context);
       }
 
       await ensurePackageInstalled(device, context);
 
       await context.log.info('Android container ready', { container: name, serial });
 
-      return { device, serial, release };
+      return { device, serial, egressIp, release };
     } catch (error) {
       // Read the logs before tearing anything down. Doing this after release()
       // means every failure report says "No such container" instead of showing
@@ -322,7 +324,7 @@ export class EphemeralRedroidProvider implements DeviceProvider {
     proxy: ProxyRuntimeConfig,
     device: AndroidDevice,
     context: AcquireContext,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const { proxyGateway } = this.options.config;
 
     if (proxyGateway.harden) {
@@ -352,9 +354,14 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       });
     }
 
+    // After the routing is pinned, because it is about the story the device
+    // tells rather than where its packets go — and before the app is driven,
+    // which is the first thing that reads a clock.
+    await alignDeviceToEgress(device, proxy, context.log, context.signal);
+
     if (!proxyGateway.egressCheck.enabled) {
       await context.log.warn('Egress check disabled; nothing has verified where this device exits');
-      return;
+      return undefined;
     }
 
     if (proxyGateway.egressCheck.probeBinary) {
@@ -369,7 +376,7 @@ export class EphemeralRedroidProvider implements DeviceProvider {
       ? await resolveProxyEndpoints({ host: checkHost, port: 80 }, this.options.lookupHost)
       : [];
 
-    await assertProxiedEgress({
+    return assertProxiedEgress({
       device,
       docker: this.docker,
       gatewayName: gateway.name,

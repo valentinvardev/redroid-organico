@@ -8,6 +8,9 @@ export interface DeviceEndpoint {
   adbHost?: string;
   adbPort?: number;
   viewerUrl?: string;
+  /** Measured by the egress check, not guessed: where this phone comes out. */
+  egressIp?: string;
+  egressLocation?: string;
 }
 
 /** The fields of a serialized job this flow cares about. */

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveViewerUrl } from '@/app/components/viewerUrl';
+import { describeLocation, resetLocationCache } from '@/lib/android/geo';
 
 describe('device viewer URL', () => {
   it('resolves {host} against the address the dashboard was loaded from', () => {
@@ -24,5 +25,46 @@ describe('device viewer URL', () => {
     // An existing deployment keeps working without being touched.
     assert.equal(resolveViewerUrl('http://10.0.0.5:8000/x', 'localhost'), 'http://10.0.0.5:8000/x');
     assert.equal(resolveViewerUrl(undefined, 'localhost'), undefined);
+  });
+});
+
+describe('egress location', () => {
+  it('describes an address in a way a person can read at a glance', async () => {
+    resetLocationCache();
+
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({
+          city: 'Dallas',
+          region: 'Texas',
+          country_code: 'US',
+          connection: { org: 'Datacamp Limited' },
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+
+    assert.equal(
+      await describeLocation('74.0.102.132', 5_000, fetchImpl),
+      'Dallas, Texas, US · Datacamp Limited',
+    );
+  });
+
+  it('answers null rather than failing a run the lookup is only decorating', async () => {
+    resetLocationCache();
+
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      throw new Error('ENOTFOUND');
+    }) as unknown as typeof fetch;
+
+    assert.equal(await describeLocation('203.0.113.7', 5_000, fetchImpl), null);
+
+    // Cached even when it failed: an address does not move, and a service that
+    // is down stays down for the length of a session.
+    assert.equal(await describeLocation('203.0.113.7', 5_000, fetchImpl), null);
+    assert.equal(calls, 1);
+
+    resetLocationCache();
   });
 });

@@ -223,6 +223,8 @@ export interface FakeDeviceOptions {
   egressTools?: string[];
   /** The probe never answers, like a tunnel that swallows the packets. */
   egressHangs?: boolean;
+  /** `setprop` is accepted and then silently ignored, as a locked-down build does. */
+  propsReadOnly?: boolean;
 }
 
 /** An AndroidDevice that answers from memory, so no emulator is needed. */
@@ -233,6 +235,8 @@ export class FakeDevice implements AndroidDevice {
   readonly removed: string[] = [];
   readonly installed: string[] = [];
   readonly probes: string[][] = [];
+  /** Android's property store, enough of it to set and read one back. */
+  readonly props = new Map<string, string>();
 
   constructor(private readonly options: FakeDeviceOptions = {}) {}
 
@@ -305,6 +309,24 @@ export class FakeDevice implements AndroidDevice {
     // chmod and the like always work; only the fetch tools are interesting.
     if (args[0] === 'chmod') {
       return { stdout: '', stderr: '', code: 0 };
+    }
+
+    if (args[0] === 'setprop') {
+      if (!this.options.propsReadOnly) {
+        this.props.set(args[1], args[2]);
+      }
+
+      // Exit 0 either way: the whole reason the caller reads the value back is
+      // that a refused property does not announce itself here.
+      return { stdout: '', stderr: '', code: 0 };
+    }
+
+    if (args[0] === 'getprop') {
+      return { stdout: `${this.props.get(args[1]) ?? ''}\n`, stderr: '', code: 0 };
+    }
+
+    if (args[0] === 'date') {
+      return { stdout: 'Sat Jul 26 20:00:00 CDT 2026\n', stderr: '', code: 0 };
     }
 
     // What the image ships, plus anything this run copied over — so a probe

@@ -1,0 +1,1138 @@
+<meta charset="utf-8">
+<title>redroid-organico — Documento técnico</title>
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm 20mm 16mm;
+    @bottom-right { content: counter(page); }
+  }
+
+  :root {
+    --ink: #16191d;
+    --ink-soft: #454b54;
+    --ink-faint: #6b727c;
+    --accent: #0f4c5c;
+    --accent-soft: #e8f0f2;
+    --rule: #d7dbe0;
+    --code-bg: #f6f7f9;
+    --warn: #8a4b08;
+    --warn-bg: #fdf5ea;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 10.2pt;
+    line-height: 1.55;
+    color: var(--ink);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  code, pre, .mono { font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace; }
+
+  /* --- Portada ------------------------------------------------------------ */
+
+  .cover {
+    height: 247mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    page-break-after: always;
+  }
+
+  .cover .band {
+    height: 6px;
+    width: 90px;
+    background: var(--accent);
+    margin-bottom: 26px;
+  }
+
+  .cover h1 {
+    font-size: 30pt;
+    line-height: 1.1;
+    margin: 0 0 10px;
+    letter-spacing: -0.02em;
+    font-weight: 650;
+  }
+
+  .cover .sub {
+    font-size: 13pt;
+    color: var(--ink-soft);
+    margin: 0 0 40px;
+    max-width: 125mm;
+    line-height: 1.45;
+  }
+
+  .cover dl {
+    display: grid;
+    grid-template-columns: 34mm 1fr;
+    gap: 5px 0;
+    margin: 0;
+    font-size: 9.5pt;
+    max-width: 125mm;
+  }
+
+  .cover dt { color: var(--ink-faint); }
+  .cover dd { margin: 0; }
+
+  /* --- Estructura --------------------------------------------------------- */
+
+  h2 {
+    font-size: 15.5pt;
+    margin: 0 0 14px;
+    padding-bottom: 7px;
+    border-bottom: 2px solid var(--accent);
+    letter-spacing: -0.01em;
+    font-weight: 620;
+    page-break-after: avoid;
+  }
+
+  h3 {
+    font-size: 11.6pt;
+    margin: 22px 0 7px;
+    color: var(--accent);
+    font-weight: 620;
+    page-break-after: avoid;
+  }
+
+  h4 {
+    font-size: 10.4pt;
+    margin: 16px 0 5px;
+    font-weight: 650;
+    page-break-after: avoid;
+  }
+
+  section { page-break-before: always; }
+  section.first { page-break-before: avoid; }
+
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 10px; padding-left: 19px; }
+  li { margin-bottom: 4px; }
+  strong { font-weight: 640; }
+
+  .lead {
+    font-size: 10.8pt;
+    color: var(--ink-soft);
+    border-left: 3px solid var(--rule);
+    padding-left: 12px;
+    margin-bottom: 18px;
+  }
+
+  /* --- Código y tablas ---------------------------------------------------- */
+
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 9px 11px;
+    font-size: 8.3pt;
+    line-height: 1.42;
+    overflow: visible;
+    white-space: pre-wrap;
+    margin: 0 0 11px;
+    page-break-inside: avoid;
+  }
+
+  code { font-size: 0.92em; background: var(--code-bg); padding: 0.5px 3px; border-radius: 2px; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.1pt;
+    margin: 0 0 12px;
+    page-break-inside: avoid;
+  }
+
+  th {
+    text-align: left;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 620;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  td { padding: 5px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  td code { font-size: 8.6pt; }
+  .nowrap { white-space: nowrap; }
+
+  .note {
+    background: var(--warn-bg);
+    border-left: 3px solid var(--warn);
+    padding: 9px 12px;
+    margin: 0 0 12px;
+    font-size: 9.5pt;
+    page-break-inside: avoid;
+  }
+
+  .note strong { color: var(--warn); }
+
+  figure { margin: 0 0 13px; page-break-inside: avoid; }
+  figcaption { font-size: 8.6pt; color: var(--ink-faint); margin-top: 5px; }
+
+  .toc { columns: 2; column-gap: 26px; font-size: 9.6pt; }
+  .toc div { margin-bottom: 5px; break-inside: avoid; }
+  .toc .n { color: var(--accent); font-weight: 620; display: inline-block; width: 17px; }
+</style>
+
+<div class="cover">
+  <div class="band"></div>
+  <h1>redroid&#8209;organico</h1>
+  <p class="sub">
+    Publicación automatizada sobre Android nativo en contenedores, con aislamiento
+    de red verificado por cuenta.
+  </p>
+  <dl>
+    <dt>Documento</dt><dd>Arquitectura y operación</dd>
+    <dt>Rama</dt><dd class="mono">main</dd>
+    <dt>Revisión</dt><dd class="mono">791bb34 — 74 commits</dd>
+    <dt>Fecha</dt><dd>26 de julio de 2026</dd>
+    <dt>Alcance</dt><dd>Sistema completo: cola, worker, driver Android, red, seguridad y operación</dd>
+  </dl>
+</div>
+
+<section class="first">
+  <h2>Contenido</h2>
+  <div class="toc">
+    <div><span class="n">1</span> Qué es y qué problema resuelve</div>
+    <div><span class="n">2</span> Stack y decisiones de fondo</div>
+    <div><span class="n">3</span> Arquitectura</div>
+    <div><span class="n">4</span> Modelo de datos</div>
+    <div><span class="n">5</span> Ciclo de vida de un job</div>
+    <div><span class="n">6</span> El driver Android</div>
+    <div><span class="n">7</span> Aislamiento de red por cuenta</div>
+    <div><span class="n">8</span> Seguridad</div>
+    <div><span class="n">9</span> Modos de falla y diagnóstico</div>
+    <div><span class="n">10</span> Operación</div>
+    <div><span class="n">11</span> Qué está verificado y qué no</div>
+    <div><span class="n">12</span> Límites conocidos</div>
+  </div>
+
+  <h2 style="margin-top:26px">1. Qué es y qué problema resuelve</h2>
+
+  <p class="lead">
+    Una cola de publicación asíncrona que maneja aplicaciones Android reales
+    corriendo en contenedores, una instancia descartable por trabajo, con la
+    salida de red de cada cuenta forzada por un proxy propio y comprobada desde
+    adentro del dispositivo antes de tocar la aplicación.
+  </p>
+
+  <p>
+    El problema de fondo no es publicar contenido: es publicarlo desde muchas
+    cuentas sin que las plataformas las vinculen entre sí. Eso descarta las dos
+    salidas obvias. Las APIs oficiales exigen una identidad de aplicación
+    compartida y limitan qué se puede hacer; la emulación x86 deja huellas de
+    traducción binaria que son una bandera roja por sí mismas.
+  </p>
+
+  <p>
+    La respuesta del sistema es manejar la aplicación como lo haría una persona
+    —toques sobre la interfaz real— sobre Android nativo en ARM, y darle a cada
+    cuenta dos cosas que no comparte con ninguna otra: un volumen de datos
+    propio y una dirección de salida propia.
+  </p>
+
+  <h3>Los tres invariantes</h3>
+
+  <p>
+    Casi todas las decisiones del código se explican por uno de estos tres. Vale
+    la pena leerlos antes que el resto del documento.
+  </p>
+
+  <table>
+    <tr>
+      <th style="width:30%">Invariante</th>
+      <th>Cómo se sostiene</th>
+    </tr>
+    <tr>
+      <td><strong>Nunca publicar dos veces</strong></td>
+      <td>
+        <code>Job.idempotencyKey</code> con constraint único, el id de la fila
+        como id de BullMQ, y una verificación de <code>COMPLETED</code> antes de
+        publicar. Un doble click, un reintento de red y una re&#8209;entrega de
+        la cola resuelven todos al mismo job.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Nunca reportar un éxito que no ocurrió</strong></td>
+      <td>
+        Los flujos de interfaz exigen al menos una aserción; el schema rechaza
+        uno que no la tenga. El identificador de la publicación sale del texto
+        que muestra la aplicación, no de un UUID generado antes de tocar nada.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Nunca salir por una dirección que no corresponde</strong></td>
+      <td>
+        El dispositivo corre dentro del namespace de red de su pasarela, con un
+        firewall que rechaza todo lo demás, y cada corrida verifica desde
+        adentro de Android por qué dirección sale. Un desvío es un job que
+        falla, no una publicación desde la IP equivocada.
+      </td>
+    </tr>
+  </table>
+
+  <p>
+    El tercero es el que más código costó y el que ocupa la sección 7 entera.
+    Los otros dos son problemas conocidos con soluciones conocidas; ese no.
+  </p>
+</section>
+
+<section>
+  <h2>2. Stack y decisiones de fondo</h2>
+
+  <table>
+    <tr>
+      <th style="width:26%">Capa</th>
+      <th style="width:26%">Elección</th>
+      <th>Por qué esa y no otra</th>
+    </tr>
+    <tr>
+      <td>Panel y API</td>
+      <td>Next.js 14, React 18</td>
+      <td>App Router; las rutas de API y el panel comparten validación y tipos.</td>
+    </tr>
+    <tr>
+      <td>Datos</td>
+      <td>PostgreSQL 16 + Prisma 7</td>
+      <td>La base es la fuente de verdad del estado de cada job, no la memoria del worker. Eso es lo que hace correcto tener varias réplicas.</td>
+    </tr>
+    <tr>
+      <td>Cola</td>
+      <td>BullMQ 5 + Redis 7</td>
+      <td>Reintentos con backoff, jobs demorados y cola de descarte ya resueltos. <code>appendonly</code> activado: sin eso un reinicio pierde lo programado.</td>
+    </tr>
+    <tr>
+      <td>Android</td>
+      <td>ReDroid 13 en ARM</td>
+      <td>Android nativo en contenedor. En Graviton no hay traducción binaria, que es una de las señales que se busca evitar.</td>
+    </tr>
+    <tr>
+      <td>Automatización</td>
+      <td>Appium + UiAutomator2, ADB</td>
+      <td>Los flujos son datos —JSON validado por schema— no código. Cambiar un selector no exige un despliegue.</td>
+    </tr>
+    <tr>
+      <td>Aislamiento</td>
+      <td>tun2socks + namespaces de Docker</td>
+      <td>Ver sección 7. No se configura ningún proxy dentro de Android.</td>
+    </tr>
+    <tr>
+      <td>Validación</td>
+      <td>Zod 4</td>
+      <td>El mismo schema valida en el alta por CLI, en la API y en el worker. No pueden discrepar.</td>
+    </tr>
+  </table>
+
+  <h3>Dos decisiones que conviene entender</h3>
+
+  <h4>Los flujos de interfaz son datos, no código</h4>
+
+  <p>
+    Un flujo es una lista de pasos declarativos guardada en las credenciales de
+    la cuenta. Acciones: <code>tap</code>, <code>type</code>,
+    <code>assertVisible</code>, <code>assertGone</code>, <code>wait</code>.
+  </p>
+
+<pre>{
+  "action": "assertVisible",
+  "name": "el perfil muestra el usuario",
+  "using": "id",
+  "value": "com.target.app:id/profile_handle",
+  "captureText": true,
+  "timeoutMs": 15000
+}</pre>
+
+  <p>
+    El schema <strong>rechaza un flujo sin al menos una aserción</strong>. Sin
+    ella el run solo puede reportar éxito, que es peor que no tener nada: da la
+    señal de que todo anda mientras la aplicación está rota. La tolerancia a
+    interfaz condicional existe pero es explícita —<code>optional: true</code>,
+    para un permiso de primer arranque— y todo lo demás falla fuerte.
+  </p>
+
+  <h4>Nada se configura dos veces</h4>
+
+  <p>
+    Las credenciales de una cuenta se validan contra
+    <code>androidCredentialsSchema</code> en el momento del alta. Un flujo con
+    una estrategia de localización inexistente, un puerto que no es número o una
+    URL malformada se rechazan ahí, no adentro de un worker a las tres de la
+    mañana. El mismo schema aplica los valores por defecto al leer, así que una
+    cuenta guardada antes de que existiera una opción la recibe igual.
+  </p>
+</section>
+
+<section>
+  <h2>3. Arquitectura</h2>
+
+  <figure>
+<pre>  PANEL / API (Next.js)                    WORKER (proceso separado)
+  ─────────────────────                    ────────────────────────
+  POST /api/videos                          BullMQ toma el job
+    hash → dedupe → storage                     │
+    ffprobe → validar → thumbnail               ├─ límite por cuenta (Redis)
+         │                                      ├─ baja el media a disco
+  POST /api/jobs                                ├─ descifra credenciales
+    crea Job (idempotencyKey único)             ├─ resuelve el proxy efectivo
+         │                                      ▼
+         └──────────► BullMQ ◄──────────  lib/publisher/registry
+                      (Redis)                   │
+                                                ▼
+                                        driver "android"
+                                                │
+                        ┌───────────────────────┴────────────────────┐
+                        ▼                                            ▼
+              PASARELA (tun2socks)                          DISPOSITIVO (ReDroid)
+              cap NET_ADMIN, /dev/net/tun                   privileged
+              PROXY=socks5://…                              --network container:pasarela
+              publica el puerto ADB                         volumen de sesión en /data
+                        └───────── mismo namespace de red ──────────┘
+                                                │
+                                                ▼
+                                 servidor ADB compartido + Appium
+                                 (namespace propio, red redroid-net)</pre>
+    <figcaption>
+      Los contenedores del par pasarela/dispositivo se crean y destruyen por
+      cada job; el resto es permanente.
+    </figcaption>
+  </figure>
+
+  <h3>Separación de procesos</h3>
+
+  <p>
+    El panel y el worker son dos procesos independientes que solo se comunican
+    por PostgreSQL y Redis. El panel nunca ejecuta un job: responde
+    inmediatamente con una fila creada, y el worker la toma cuando puede. Eso es
+    lo que evita que una publicación de tres minutos se convierta en un timeout
+    de HTTP.
+  </p>
+
+  <p>
+    El worker necesita el socket de Docker porque crea y destruye contenedores.
+    Eso equivale a root en el host: aceptable para este despliegue, no para uno
+    compartido.
+  </p>
+
+  <h3>Dónde está cada cosa</h3>
+
+  <table>
+    <tr><th style="width:32%">Ruta</th><th>Contenido</th></tr>
+    <tr><td class="mono">app/api/</td><td>Rutas HTTP: jobs, videos, cuentas, proxies, auth, salud, stream SSE</td></tr>
+    <tr><td class="mono">lib/android/</td><td>ADB, Appium, flujos, contenedor efímero, pasarela, política de egress, verificación, reaper</td></tr>
+    <tr><td class="mono">lib/proxy/</td><td>Validación de proxies, armado de la URL, asignación por cuenta</td></tr>
+    <tr><td class="mono">lib/publisher/</td><td>Contrato del adaptador, errores clasificados, drivers</td></tr>
+    <tr><td class="mono">lib/worker/</td><td>Procesador de jobs, limitador por cuenta, arranque del worker</td></tr>
+    <tr><td class="mono">lib/crypto/</td><td>Cifrado AES&#8209;256&#8209;GCM de credenciales, con rotación</td></tr>
+    <tr><td class="mono">scripts/</td><td>Alta de cuentas, export/import, diagnóstico de pasarela y de egress, carga, reportes</td></tr>
+    <tr><td class="mono">tests/integration/</td><td>15 archivos contra Postgres y Redis reales</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>4. Modelo de datos</h2>
+
+  <p>Ocho modelos. Los cuatro primeros son el núcleo.</p>
+
+  <table>
+    <tr><th style="width:20%">Modelo</th><th>Rol</th></tr>
+    <tr>
+      <td><strong>Account</strong></td>
+      <td>
+        Una identidad en la plataforma objetivo. Guarda sus credenciales
+        cifradas —que incluyen qué aplicación manejar y con qué flujos—, su
+        estado de sesión, sus límites de concurrencia y a qué proxy sale.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Job</strong></td>
+      <td>
+        Una corrida. Publicación o vinculación interactiva. Lleva su clave de
+        idempotencia, su presupuesto de reintentos, el endpoint del dispositivo
+        mientras espera a una persona, y las métricas de la corrida.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Proxy</strong></td>
+      <td>
+        Una salida de red. Pertenece a un usuario y puede compartirse entre
+        cuentas —el panel avisa cuándo—. La contraseña va cifrada con la misma
+        clave que el resto de las credenciales.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Video</strong></td>
+      <td>
+        Media validada: duración, dimensiones, códec, checksum para deduplicar
+        reenvíos.
+      </td>
+    </tr>
+    <tr><td><strong>JobLog</strong></td><td>Bitácora por job, redactada por lista de claves. Es lo que muestra el panel.</td></tr>
+    <tr><td><strong>User</strong>, <strong>Session</strong>, <strong>ApiToken</strong></td><td>Operadores, sus sesiones por cookie y los tokens para acceso servidor a servidor.</td></tr>
+  </table>
+
+  <h3>Dos estados que no son el mismo</h3>
+
+  <p>
+    <code>Account.status</code> es <em>intención del operador</em>:
+    <code>ACTIVE</code> significa "quiero que se use".
+    <code>Account.sessionState</code> es <em>realidad del dispositivo</em>:
+    <code>VERIFIED</code> significa "alguien se logueó y un flujo lo confirmó".
+    Una cuenta puede estar activa y sin sesión. Colapsarlos haría
+    indistinguible "habilitada" de "usable".
+  </p>
+
+  <h3>Estados de un job</h3>
+
+  <table>
+    <tr><th style="width:22%">Estado</th><th>Significa</th></tr>
+    <tr><td class="mono">QUEUED / SCHEDULED</td><td>Esperando worker, o esperando su hora.</td></tr>
+    <tr><td class="mono">PROCESSING</td><td>Un worker lo tomó.</td></tr>
+    <tr><td class="mono">AWAITING_HUMAN</td><td>Hay un dispositivo vivo y una persona logueándose en él. No hay nada mal en un job que pasa diez minutos acá.</td></tr>
+    <tr><td class="mono">VERIFYING</td><td>La persona dijo que terminó y el worker está comprobando si la aplicación coincide. Separado de lo anterior: un job que muere acá tiene que distinguirse de uno que murió esperando.</td></tr>
+    <tr><td class="mono">COMPLETED / FAILED</td><td>Terminal.</td></tr>
+    <tr><td class="mono">CANCELLED / DEAD</td><td>Cancelado por el operador; o agotó los reintentos y quedó en la cola de descarte.</td></tr>
+  </table>
+
+  <div class="note">
+    <strong>Por qué importa AWAITING_HUMAN.</strong> El barredor de contenedores
+    huérfanos decide contra la base. Antes trataba todo lo que no fuera
+    <code>PROCESSING</code> como basura, y destruía el dispositivo de una
+    vinculación a los noventa segundos, en la mitad del login de la persona.
+  </div>
+</section>
+
+<section>
+  <h2>5. Ciclo de vida de un job</h2>
+
+  <h3>Idempotencia</h3>
+
+  <p>
+    El cliente manda una cabecera <code>Idempotency-Key</code>; la columna tiene
+    constraint único. Dos requests concurrentes con la misma clave resuelven al
+    mismo job: el que pierde la carrera lee la fila que escribió el que ganó, en
+    vez de devolver un conflicto. El id de BullMQ es el id de la fila, así que un
+    re&#8209;encolado accidental lo descarta Redis. Y antes de publicar se
+    verifica <code>COMPLETED</code>, por si la cola entrega dos veces.
+  </p>
+
+  <h3>Reintentos, y qué no se reintenta</h3>
+
+  <p>
+    Backoff exponencial: 15s, 60s, 240s. Lo que decide si hay reintento es la
+    clasificación del error, no el tipo de excepción.
+  </p>
+
+  <table>
+    <tr><th style="width:40%">Situación</th><th style="width:18%">Reintenta</th><th>Por qué</th></tr>
+    <tr><td>Dispositivo sin bootear, Appium inalcanzable, push incompleto</td><td>Sí</td><td>Infraestructura que todavía no está lista.</td></tr>
+    <tr><td>Un selector que nunca aparece</td><td><strong>No</strong></td><td>Tres reintentos gastan cinco minutos, informan lo mismo y esconden un defecto real detrás de "intento 3/3".</td></tr>
+    <tr><td>La aplicación se cae al arrancar</td><td><strong>No</strong></td><td>Es un hallazgo, no una intermitencia.</td></tr>
+    <tr><td>Credenciales o flujo inválidos</td><td><strong>No</strong></td><td>Reintentar no arregla una configuración.</td></tr>
+    <tr><td>El dispositivo sale por la IP del host</td><td><strong>No</strong></td><td>Cada reintento sería otra oportunidad de publicar desde la dirección equivocada.</td></tr>
+  </table>
+
+  <h3>Límite por cuenta</h3>
+
+  <p>
+    Dos límites independientes en Redis, compartidos entre réplicas:
+    <code>maxConcurrent</code> y <code>minIntervalSeconds</code>. Cuando frenan
+    un job, este se posterga <strong>sin consumir un intento</strong>: el
+    throttling nunca agota el presupuesto de reintentos. La misma reserva la
+    toman las publicaciones y las vinculaciones, porque las dos montan el volumen
+    de sesión de la cuenta y dos a la vez lo corromperían.
+  </p>
+
+  <h3>Recuperación</h3>
+
+  <p>
+    Un worker que muere a mitad de un job dejaba la fila en
+    <code>PROCESSING</code> para siempre. Al arrancar,
+    <code>recoverOrphans()</code> busca esas filas, verifica contra BullMQ que
+    nadie las esté procesando, y las re&#8209;encola. El apagado con SIGTERM
+    espera a que terminen los jobs activos en vez de matarlos: una publicación
+    interrumpida y re&#8209;entregada puede ser un post duplicado.
+  </p>
+
+  <h3>Vinculación interactiva</h3>
+
+  <p>
+    Es el flujo inverso al de publicación: el worker levanta un dispositivo, pone
+    la aplicación en pantalla, publica el endpoint del visor y <em>se corre del
+    medio</em>. La persona se loguea mirando la pantalla real en el panel. Cuando
+    dice que terminó, recién ahí el worker corre el flujo de verificación.
+  </p>
+
+  <p>
+    Marcar una cuenta como verificada porque alguien apretó un botón sería la
+    misma categoría de mentira que un identificador de publicación inventado. Por
+    eso <code>verifyFlow</code> es obligatorio para poder usar vinculación
+    interactiva, y una confirmación que la aplicación no respalda deja la cuenta
+    sin verificar.
+  </p>
+
+  <div class="note">
+    <strong>Un dispositivo vivo cuesta.</strong> Una pestaña cerrada no avisa
+    nada, así que el deadline es lo único que termina una sesión abandonada. Los
+    jobs interactivos se crean con un solo intento: un reintento levantaría un
+    segundo dispositivo que nadie está mirando.
+  </div>
+</section>
+
+<section>
+  <h2>6. El driver Android</h2>
+
+  <p>
+    El driver no sabe de dónde sale el dispositivo. Eso lo decide un
+    <em>provider</em>: uno para un dispositivo que ya existe y sobrevive al job
+    —un teléfono por USB, un emulador local— y otro que crea un contenedor
+    descartable por corrida. El segundo es el que importa.
+  </p>
+
+  <h3>Ciclo de vida del contenedor efímero</h3>
+
+<pre>acquire()
+  ├─ rechaza si la cuenta ya tiene un contenedor vivo   (dos jobs = un volumen = corrupción)
+  ├─ crea el volumen de sesión de la cuenta
+  ├─ levanta la pasarela y le conecta la red de control
+  ├─ docker run --privileged --network container:pasarela
+  ├─ espera el puerto ADB, conecta, espera el boot
+  ├─ fija el namespace al túnel y verifica la salida      ← sección 7
+  └─ verifica que la aplicación esté instalada
+release()
+  ├─ adb disconnect      (sin esto el servidor acumula entradas "offline")
+  ├─ borra el dispositivo
+  └─ borra la pasarela   (en ese orden, obligatorio)</pre>
+
+  <h3>Tres compuertas de readiness</h3>
+
+  <p>
+    Cada una pasa mientras la siguiente falla, y por eso están las tres: el
+    contenedor corre, ADB acepta conexión, y Android terminó de bootear. ReDroid
+    marca <code>sys.boot_completed</code> mientras la animación de arranque sigue
+    y el gestor de paquetes se está acomodando; entregar ese dispositivo a Appium
+    produce corridas que fallan con "elemento no encontrado" sin que el flujo
+    tenga nada malo.
+  </p>
+
+  <p>
+    Hay una cuarta, específica del almacenamiento: <code>/sdcard</code> es un
+    montaje FUSE que se prepara después del boot. Empujar un archivo en esa
+    ventana transfiere los bytes y después falla al crear el archivo, en un
+    directorio que funciona perfecto un minuto más tarde. Se prueba la capacidad
+    —¿se puede crear un archivo acá?— en vez de una propiedad que correlacione
+    con ella.
+  </p>
+
+  <h3>El volumen de sesión</h3>
+
+  <p>
+    Uno por cuenta, montado en <code>/data</code>, que es donde Android guarda
+    todo lo que debe sobrevivir entre corridas: el login, las bases de la
+    aplicación, las preferencias. Dos cuentas nunca se ven el estado.
+  </p>
+
+  <p>
+    Ese montaje explica un detalle que confunde: la aplicación bajo prueba
+    <strong>no se puede hornear en la imagen</strong>. Las aplicaciones de usuario
+    viven bajo <code>/data</code>, que ReDroid monta en tiempo de ejecución, y
+    <code>docker commit</code> solo captura la capa de escritura del contenedor.
+    La imagen se construye, se verifica y sale vacía. Por eso el APK se instala
+    en la primera corrida de cada cuenta y persiste en su volumen.
+  </p>
+
+  <h3>Que no queden zombies</h3>
+
+  <p>
+    Un contenedor Android sobrevive al proceso que lo creó y se come un gigabyte
+    de RAM. Tres mecanismos independientes, porque cualquiera se puede saltear:
+  </p>
+
+  <ol>
+    <li><strong>El <code>finally</code> del publisher.</strong> El camino normal. Corre aunque Appium explote a mitad del flujo, y aunque la adquisición falle a mitad de camino.</li>
+    <li><strong>Timeout en cada llamada a Docker.</strong> Un demonio trabado no puede convertir "destruí el contenedor" en una promesa que nunca resuelve.</li>
+    <li><strong>El barredor.</strong> Lo único que sirve cuando el worker recibe SIGKILL y ningún <code>finally</code> llega a correr.</li>
+  </ol>
+
+  <p>
+    El barredor decide contra la base de datos, no contra estado en memoria: un
+    contenedor cuya etiqueta de job apunta a uno que no está vivo es basura sin
+    importar qué worker lo creó. Eso lo hace correcto con varias réplicas. Ante
+    la duda no mata: uno más joven que el período de gracia se deja en paz, y si
+    no puede consultar el job lo reporta y sigue.
+  </p>
+
+  <p>
+    Barre en un orden que no es preferencia sino obligación: primero los
+    dispositivos, después las pasarelas. Docker se niega a borrar un contenedor
+    mientras otro le presta el namespace de red, así que barrer en el orden de la
+    lista dejaría todas las pasarelas atrás, para reintentar en cada barrida
+    para siempre.
+  </p>
+</section>
+
+<section>
+  <h2>7. Aislamiento de red por cuenta</h2>
+
+  <p class="lead">
+    Esta sección documenta el problema más difícil del sistema y su solución. Se
+    escribió después de resolverlo contra una máquina real, y varios de los
+    hallazgos contradicen lo que parecía obvio al empezar.
+  </p>
+
+  <h3>7.1 El patrón</h3>
+
+  <p>
+    No se configura <strong>ningún</strong> proxy dentro de Android. El worker
+    levanta un contenedor <code>tun2socks</code> por job y arranca el ReDroid
+    dentro de <em>su</em> namespace de red:
+  </p>
+
+<pre>docker run --cap-add NET_ADMIN --device /dev/net/tun \
+           --network redroid-net -p 127.0.0.1::5555 \
+           -e PROXY=socks5://usuario:clave@pasarela:puerto \
+           --name redroid-gw-&lt;jobId&gt;  xjasonlyu/tun2socks:v2.5.1
+
+docker run --privileged --network container:redroid-gw-&lt;jobId&gt; \
+           --name redroid-job-&lt;jobId&gt;  &lt;imagen golden&gt;</pre>
+
+  <p>
+    La razón de fondo: el dispositivo no tiene ninguna interfaz propia. No hay
+    una opción que una aplicación pueda ignorar, ni tráfico UDP que se escape del
+    proxy del sistema, ni estado que se pierda al restaurar la sesión desde el
+    volumen. La única salida es el <code>tun0</code> de la pasarela.
+  </p>
+
+  <p>Consecuencias estructurales:</p>
+
+  <ul>
+    <li><strong>Los puertos son de la pasarela.</strong> Un contenedor que comparte namespace no puede publicar nada, así que el 5555 de ADB se publica ahí y el serial del dispositivo sale de la pasarela.</li>
+    <li><strong>El teardown tiene un orden obligatorio</strong>, por la misma razón.</li>
+    <li><strong>Una cuenta con proxy exige contenedor efímero.</strong> Sobre un dispositivo que el sistema no creó no hay namespace del cual apropiarse, así que el job falla en vez de publicar sin máscara.</li>
+  </ul>
+
+  <h3>7.2 Por qué compartir el namespace no alcanza</h3>
+
+  <p>
+    Acá es donde el diseño ingenuo se rompe. <code>netd</code>, el demonio de red
+    de Android, no es un inquilino pasivo del namespace: instala sus propias
+    reglas de ruteo por política y le estampa a cada socket el identificador de
+    red con <code>SO_MARK</code>. El resultado es que el tráfico de Android
+    matchea <em>sus</em> reglas y sale por <code>eth0</code>, mientras un
+    <code>curl</code> sin marca, en el mismo namespace, sigue obedientemente el
+    túnel.
+  </p>
+
+  <p>
+    Nada se escapa del namespace —no puede—: netd simplemente gana por prioridad.
+    Esto es lo que se ve dentro de un dispositivo real:
+  </p>
+
+<pre>0:     from all lookup local
+90:    from all fwmark 0x22b lookup 1002      ← nuestras
+95:    from all to 172.19.0.0/16 lookup 1002
+100:   from all lookup 555
+────────────────────────────────────────────── de acá abajo, netd
+10000: from all fwmark 0xc0000/0xd0000 lookup 99
+11000: from all iif lo oif eth0 uidrange 0-0 lookup 1002
+16000: from all fwmark 0x10064/0x1ffff iif lo lookup 1002
+17000: from all iif lo oif eth0 lookup 1002
+18000: from all fwmark 0/0x10000 lookup 99
+23000: from all fwmark 0x64/0x1ffff iif lo lookup 1002
+31000: from all fwmark 0/0xffff iif lo lookup 1002
+32000: from all unreachable</pre>
+
+  <p>
+    Once reglas, todas en la banda 10000–32000. La de 23000 es la que se llevaba
+    el tráfico por fuera del proxy. El diagnóstico se hace en dos comandos:
+  </p>
+
+<pre>docker exec &lt;pasarela&gt; ip route get 1.1.1.1            # sin marca: lo que hace curl
+docker exec &lt;pasarela&gt; ip route get 1.1.1.1 mark 100   # con netId: lo que hace Android</pre>
+
+  <h3>7.3 Las tres capas</h3>
+
+  <p>
+    Se aplican por <code>docker exec</code> <strong>después</strong> de que
+    Android terminó de bootear, no en el <code>docker run</code>: netd inserta
+    sus propias reglas mientras arranca, y lo que se escriba antes queda detrás.
+  </p>
+
+  <table>
+    <tr><th style="width:14%">Capa</th><th>Qué hace</th><th style="width:22%">Si falta</th></tr>
+    <tr>
+      <td><strong>1. Ruteo</strong></td>
+      <td>Las mismas reglas en prioridad 90 y 100, por debajo de todo lo de netd. La 100 no tiene selector: matchea todo paquete sin importar la marca.</td>
+      <td>No hay aislamiento. Es la capa que sostiene todo.</td>
+    </tr>
+    <tr>
+      <td><strong>2. Marcado</strong></td>
+      <td><code>mangle OUTPUT</code> borra la marca de netd, lo que además obliga al kernel a rehacer el lookup de ruta.</td>
+      <td>Redundante con la 1. Se saltea con un aviso.</td>
+    </tr>
+    <tr>
+      <td><strong>3. Firewall</strong></td>
+      <td>Decida lo que decida el ruteo, solo pueden emitir: <code>lo</code>, el túnel, las respuestas entrantes, la salida de la pasarela hacia su proxy y la subred de control. El resto, <code>REJECT</code>.</td>
+      <td>Un desvío vuelve a ser una IP equivocada en vez de una conexión que falla.</td>
+    </tr>
+  </table>
+
+  <p>
+    La red de control existe para que la única excepción del firewall no sea un
+    agujero: se declara <code>internal</code>, o sea que Docker no le da ruta
+    fuera del host. Esa restricción vive <em>afuera</em> del namespace, donde
+    Android no la alcanza ni siendo privilegiado.
+  </p>
+
+  <h3>7.4 Cuatro hallazgos que costaron una corrida cada uno</h3>
+
+  <p>
+    Todos se descubrieron contra la máquina real. Se documentan porque ninguno
+    era evidente y todos vuelven a aparecer en cualquier host nuevo.
+  </p>
+
+  <h4>El backend de iptables</h4>
+
+  <p>
+    La imagen de la pasarela apunta <code>/sbin/iptables</code> al binario
+    <em>legacy</em>. En un host con nftables —Ubuntu 24.04 en adelante— eso
+    contesta <code>Table does not exist</code>: primero para <code>mangle</code>,
+    después para <code>filter</code>, y no se termina más. Perseguirlo cargando
+    módulos legacy de a uno es emular a mano un backend que el kernel ya tiene.
+    El script prueba <code>iptables-nft</code>, <code>iptables-legacy</code> e
+    <code>iptables</code>, y se queda con el primero que conteste.
+  </p>
+
+  <h4>La tabla del bypass no es <code>main</code></h4>
+
+  <p>
+    La pasarela necesita alcanzar su propio proxy sin pasar por el túnel que ella
+    misma sirve. La regla obvia apunta a <code>main</code>, y en Android
+    <code>main</code> está vacía: netd se lleva la interfaz física a una tabla
+    propia. El paquete no encontraba nada, atravesaba las once reglas de netd sin
+    matchear ninguna —la única catch&#8209;all exige marca cero— y moría en
+    <code>32000: unreachable</code>. La pasarela perdía la conexión a su proxy y
+    el síntoma era un túnel que no relayaba nada. La tabla ahora se descubre: la
+    primera ruta por defecto que no sea la del túnel.
+  </p>
+
+  <h4>Las subredes directas se llevaban a ADB</h4>
+
+  <p>
+    La tabla del túnel tiene <em>solo</em> las rutas del túnel: tun2socks no copia
+    las que había. Así que la regla catch&#8209;all mandaba al túnel también lo
+    destinado a la subred local, que es donde vive la conexión ADB. El plano de
+    control se cortaba y todas las sondas leían como "sin red" —el mismo síntoma
+    que el problema original—. Las subredes directamente conectadas ahora salen
+    antes del catch&#8209;all.
+  </p>
+
+  <h4>El proxy puede rechazar el destino</h4>
+
+  <p>
+    Un endpoint elegido por IP para esquivar el DNS resultó ser un resolver
+    público, y los proveedores residenciales los bloquean de rutina para evitar
+    DNS tunneling: la respuesta fue <code>connection not allowed by ruleset</code>
+    y la lectura ingenua acusaba a un proxy que funcionaba. La verificación ahora
+    usa un host común y <strong>el worker resuelve el nombre</strong>, pasándole
+    la dirección a <code>curl --resolve</code>: sin DNS en el dispositivo y sin
+    una IP de resolver en ninguna lista negra.
+  </p>
+
+  <div class="note">
+    <strong>DNS sigue siendo un tema aparte.</strong> La verificación lo esquiva
+    a propósito, pero la aplicación bajo prueba no puede. DNS es UDP y un SOCKS5
+    sin UDP ASSOCIATE lo descarta en silencio. La salida limpia es forzar DNS
+    sobre TCP con Private DNS (DoT, puerto 853), que atraviesa el túnel sin
+    depender de UDP.
+  </div>
+
+  <h3>7.5 La verificación</h3>
+
+  <p>
+    Todo lo anterior describe <em>lo que el worker pidió</em>. Una sola cosa dice
+    <em>lo que Android hizo</em>: preguntarle al dispositivo, desde adentro, por
+    qué dirección sale.
+  </p>
+
+<pre>[info] Egress verified from inside the device  deviceIp=203.0.113.7 directIp=190.x.x.x</pre>
+
+  <p>
+    La comparación es contra la dirección <strong>del host</strong>, no la del
+    proxy. Un residencial rotativo entrega una salida distinta por conexión, así
+    que comparar contra el proxy daría falsos positivos todo el día; comparar
+    contra la IP que se filtraría es inequívoco. Si coinciden, el job falla con
+    <code>egress_leak_detected</code>, permanente, y el contenedor se destruye
+    antes de que el flujo toque la aplicación.
+  </p>
+
+  <p>
+    Una imagen AOSP no trae ningún cliente HTTP —ni curl, ni un toybox con el
+    applet wget—, así que el operador apunta <code>probeBinary</code> a un curl
+    estático y el worker lo copia a <code>/data/local/tmp</code> en la primera
+    corrida de cada cuenta. Persiste en el volumen de sesión, igual que el APK y
+    por el mismo motivo.
+  </p>
+
+  <p>
+    Cuando la verificación falla y no contesta ni el dispositivo ni la pasarela,
+    el error se lleva puesto el estado del namespace: reglas de ruteo, todas las
+    tablas y <strong>los contadores del firewall</strong>. Esos contadores son los
+    que separan "lo bloqueó la política" de "el proxy está caído", y los
+    contenedores se destruyen en un <code>finally</code>: lo que no se capture ahí
+    no existe más.
+  </p>
+</section>
+
+<section>
+  <h2>8. Seguridad</h2>
+
+  <h3>Credenciales</h3>
+
+  <p>
+    <code>Account.credentials</code> y <code>Proxy.password</code> se guardan
+    cifrados con AES&#8209;256&#8209;GCM en un sobre <code>iv || tag ||
+    ciphertext</code>. Se descifran solo dentro del worker y solo durante un job.
+    La API nunca los devuelve: el panel recibe un booleano que dice si hay
+    contraseña, no la contraseña.
+  </p>
+
+  <h3>Rotación sin ventana de migración</h3>
+
+  <p>
+    <code>CREDENTIALS_KEYS_OLD</code> acepta claves retiradas separadas por coma,
+    usadas <strong>solo para descifrar</strong>. Como GCM autentica, probar varias
+    es seguro: una clave incorrecta falla limpio en vez de devolver basura. Se
+    pone la nueva como primaria, se mueve la vieja al respaldo, y un script
+    re&#8209;sella las filas. Es idempotente y <strong>nunca toca una fila que no
+    pudo abrir</strong>: reporta cuáles fallaron y sale con código de error,
+    porque perder el dato es peor que un reintento con la clave correcta.
+  </p>
+
+  <h3>Redacción en los logs</h3>
+
+  <p>
+    El registrador de jobs redacta por lista de claves antes de escribir en la
+    base. Cubre credenciales, tokens, contraseñas, cookies y configuraciones de
+    proxy. La forma deliberada y ya redactada se registra bajo otro nombre
+    —<code>egress</code>— justamente para que la clave <code>proxy</code> se pueda
+    blanquear sin excepciones.
+  </p>
+
+  <p>
+    Un detalle de la misma familia: las credenciales se percent&#8209;encodean al
+    armar la URL del proxy. Sin eso, una contraseña con un <code>@</code> mueve el
+    límite del host y la URL apunta a otro lado.
+  </p>
+
+  <h3>Acceso</h3>
+
+  <p>
+    Sesiones con cookie <code>httpOnly</code>; en la base se guarda solo el hash
+    SHA&#8209;256 del token, así que un volcado de esa tabla no se puede reproducir
+    como login. Contraseñas con scrypt. El registro público está apagado por
+    defecto. Un cambio de contraseña invalida <em>todas</em> las sesiones incluida
+    la que lo pidió: es la respuesta estándar a una sospecha de compromiso, y
+    dejar las otras vivas anularía el sentido.
+  </p>
+</section>
+
+<section>
+  <h2>9. Modos de falla y diagnóstico</h2>
+
+  <p>
+    Los errores están clasificados en el código con un identificador estable. La
+    tabla siguiente es la referencia operativa.
+  </p>
+
+  <table>
+    <tr><th style="width:30%">Código</th><th style="width:12%">Reintenta</th><th>Qué mirar</th></tr>
+    <tr><td class="mono">device_not_ready</td><td>Sí</td><td>Logs del contenedor. Casi siempre binderfs o memfd en el host.</td></tr>
+    <tr><td class="mono">app_not_installed</td><td>No</td><td>El <code>packageName</code> no coincide con lo que declara el APK.</td></tr>
+    <tr><td class="mono">app_not_running</td><td>No</td><td>La aplicación se cayó al arrancar. Es un hallazgo.</td></tr>
+    <tr><td class="mono">ui_step_not_found</td><td>No</td><td>El selector no existe. <code>dump-ui.sh --artifact</code> muestra qué había en pantalla cuando falló.</td></tr>
+    <tr><td class="mono">appium_unreachable</td><td>Sí</td><td>El servicio de Appium.</td></tr>
+    <tr><td class="mono">invalid_android_credentials</td><td>No</td><td>El mensaje dice qué campo.</td></tr>
+    <tr><td class="mono">proxy_requires_ephemeral_device</td><td>No</td><td>La cuenta tiene proxy pero no un bloque <code>redroid</code>.</td></tr>
+    <tr><td class="mono">egress_unreachable</td><td>Sí</td><td>Distingue solo dos casos: si todo dio código 127, falta el cliente HTTP en la imagen; si todo dio timeout, el túnel se traga los paquetes.</td></tr>
+    <tr><td class="mono">egress_leak_detected</td><td><strong>No</strong></td><td>El dispositivo salió por la IP del host. Nunca se reintenta.</td></tr>
+  </table>
+
+  <h3>Herramientas de diagnóstico</h3>
+
+  <table>
+    <tr><th style="width:38%">Comando</th><th>Para qué</th></tr>
+    <tr><td class="mono">npm run gateway:test -- --proxy &lt;l&gt;</td><td>Reproduce la ruta de salida en aislamiento. Bisecta credenciales contra ruteo, y con <code>--as socks5</code> prueba el mismo endpoint como otro tipo de proxy.</td></tr>
+    <tr><td class="mono">npm run device:egress -- --account &lt;id&gt;</td><td>La salida real del dispositivo. <code>--hold</code> lo deja arriba para mirarlo por el visor.</td></tr>
+    <tr><td class="mono">./scripts/dump-ui.sh</td><td>Los selectores que la aplicación expone de verdad. Con <code>--artifact</code>, sobre el volcado que guardó una corrida que falló.</td></tr>
+    <tr><td class="mono">npm run account:list</td><td>Cuentas con su configuración descifrada y redactada, y por qué salida sale cada una.</td></tr>
+    <tr><td class="mono">tsx scripts/lastJob.ts</td><td>El último job con su estado, su error y sus logs.</td></tr>
+  </table>
+
+  <div class="note">
+    <strong>El mensaje genérico del panel nunca dice el motivo real.</strong> Está
+    en el log del job o en el del worker. Los errores del driver Android incluyen
+    las últimas líneas del contenedor: se leen <em>antes</em> de destruirlo, porque
+    hacerlo después reporta "No such container" en vez de la causa — el
+    diagnóstico destruido por la limpieza que debía explicarlo.
+  </div>
+</section>
+
+<section>
+  <h2>10. Operación</h2>
+
+  <h3>Despliegue</h3>
+
+  <p>
+    Dos servicios de systemd, <code>redroid-web</code> y
+    <code>redroid-worker</code>, corriendo sobre el host. No hay paso de
+    compilación: el worker corre bajo <code>tsx</code> y el panel bajo Next, y
+    los dos transpilan al vuelo. Actualizar es casi siempre reiniciar el servicio
+    que usa el archivo que se tocó.
+  </p>
+
+<pre>git pull
+npm ci                       # si cambió package-lock
+npx prisma migrate deploy    # si hay migraciones nuevas
+sudo systemctl restart redroid-worker redroid-web</pre>
+
+  <p>
+    Los datastores y el stack de Android van en contenedores:
+    <code>docker compose --profile android up -d</code> levanta Postgres, Redis,
+    el servidor ADB compartido, Appium y el visor de pantalla.
+  </p>
+
+  <div class="note">
+    <strong>Un cambio de credenciales no necesita reinicio.</strong> El worker las
+    lee de la base en cada job. El reinicio es para cambios de código.
+  </div>
+
+  <h3>Preparar el host</h3>
+
+  <p>Verificado sobre Ubuntu en Graviton (ARM64). Nada de esto es opcional:</p>
+
+  <table>
+    <tr><th style="width:26%">Requisito</th><th>Por qué</th></tr>
+    <tr>
+      <td><strong>binderfs montado</strong></td>
+      <td>Los kernels modernos no crean <code>/dev/binder</code>; los dispositivos viven en binderfs. Sin eso el contenedor no arranca.</td>
+    </tr>
+    <tr>
+      <td><strong>memfd, no ashmem</strong></td>
+      <td>Si el kernel no tiene ashmem, ReDroid 11 no arranca: hay que usar imagen 12 o 13 y pedir memfd explícitamente. Sin eso el contenedor arranca y se cuelga a mitad del boot sin error visible, que es la peor forma de fallar.</td>
+    </tr>
+    <tr>
+      <td><strong><code>/dev/net/tun</code></strong></td>
+      <td>Solo para proxies: la pasarela crea su dispositivo túnel desde adentro del contenedor.</td>
+    </tr>
+  </table>
+
+  <p>
+    Los módulos legacy de netfilter <strong>no</strong> hacen falta: el script
+    elige el backend que el kernel conteste. Ver 7.4.
+  </p>
+
+  <h3>Alta y edición de cuentas</h3>
+
+<pre>npm run account:list
+npm run account:export -- --account &lt;id&gt; --out cuenta.json
+# editar
+npm run account:add -- --account &lt;id&gt; --driver android --credentials-file cuenta.json</pre>
+
+  <p>
+    El import valida contra el mismo schema que usa el worker y, si algo está mal,
+    <strong>no escribe nada</strong>. Es un reemplazo, no una fusión: lo que se
+    borre del archivo se pierde. Por eso existe el export — antes, cambiar un
+    campo exigía recordar la configuración entera, flujos incluidos.
+  </p>
+</section>
+
+<section>
+  <h2>11. Qué está verificado y qué no</h2>
+
+  <p class="lead">
+    Distinguir lo comprobado de lo escrito es parte del diseño de este sistema, y
+    esta sección se mantiene con el mismo criterio.
+  </p>
+
+  <h3>Comprobado contra infraestructura real</h3>
+
+  <ul>
+    <li>Ciclo completo de publicación: alta de media, validación con ffprobe, thumbnail, encolado, worker, publicación y logs.</li>
+    <li>Idempotencia, reintentos con backoff, agotamiento hacia la cola de descarte, recuperación de huérfanos tras caída del worker, límite por cuenta.</li>
+    <li>Autenticación completa: rechazo sin sesión, throttling de logins fallidos, cambio de contraseña con invalidación.</li>
+    <li>Rotación de claves con re&#8209;sellado.</li>
+    <li>El stack completo en contenedores, y el workflow de integración continua.</li>
+    <li><strong>La cadena de aislamiento de red, de punta a punta contra un VPS real:</strong> elección de backend de iptables, bypass de la pasarela hacia su proxy, ADB fuera del túnel, firewall sin un solo descarte espurio, y la verificación de salida contestando desde adentro de Android.</li>
+  </ul>
+
+  <h3>No verificado</h3>
+
+  <ul>
+    <li><strong>Los flujos de interfaz contra la aplicación objetivo.</strong> La mecánica del driver está cubierta por tests que hablan HTTP real contra un Appium simulado —incluida la garantía de que un flujo que no encuentra sus elementos falla en vez de reportar éxito—, pero los selectores concretos dependen de la aplicación y se escriben con <code>dump-ui.sh</code>.</li>
+    <li><strong>El despliegue con HTTPS.</strong> La cookie se marca <code>secure</code> sola en producción, pero eso requiere TLS delante.</li>
+    <li><strong>Volumen sostenido.</strong> Existen el encolador de carga y el reporte por región, pero no hay todavía una corrida larga que respalde números.</li>
+  </ul>
+
+  <h3>Cobertura</h3>
+
+  <p>
+    197 tests de integración contra Postgres y Redis reales, más 9 de humo que no
+    requieren infraestructura. Los de la cadena de red usan un doble de Docker que
+    reproduce la regla que importa: un contenedor cuyo namespace otro está usando
+    no se puede borrar. Y el script de política de red se validó ejecutándolo
+    contra la imagen real de la pasarela, incluyendo kernels simulados sin tabla
+    <code>mangle</code>, sin <code>xt_mark</code> y sin backend legacy.
+  </p>
+</section>
+
+<section>
+  <h2>12. Límites conocidos</h2>
+
+  <table>
+    <tr><th style="width:30%">Límite</th><th>Detalle y salida</th></tr>
+    <tr>
+      <td><strong>Proxies HTTP</strong></td>
+      <td>Relayan solo TCP, y en la práctica ni eso: muchos resetean cualquier CONNECT que no vaya al 443, y tun2socks necesita TCP arbitrario. Si el proveedor ofrece las dos sobre el mismo endpoint, SOCKS5 siempre.</td>
+    </tr>
+    <tr>
+      <td><strong>DNS dentro de Android</strong></td>
+      <td>Es UDP y no sobrevive a un SOCKS5 sin UDP ASSOCIATE. La verificación lo esquiva; la aplicación no puede. Salida: Private DNS sobre TCP.</td>
+    </tr>
+    <tr>
+      <td><strong>El socket de Docker en el worker</strong></td>
+      <td>Equivale a root en el host. Aceptable en un despliegue dedicado, no en uno compartido.</td>
+    </tr>
+    <tr>
+      <td><strong>Un proxy compartido entre cuentas</strong></td>
+      <td>Está permitido y el panel lo avisa, pero dos cuentas en una misma IP residencial son exactamente la correlación que el sistema existe para evitar.</td>
+    </tr>
+    <tr>
+      <td><strong>Reconfiguración en caliente</strong></td>
+      <td>Cambiar el proxy de una cuenta aplica al próximo job. Mover un contenedor vivo a otro namespace de red no es algo que Docker sepa hacer.</td>
+    </tr>
+    <tr>
+      <td><strong>La capa 2 del aislamiento</strong></td>
+      <td>Depende de la tabla <code>mangle</code> y del target <code>MARK</code>. Donde el kernel no los tenga se saltea con un aviso; es defensa en profundidad, no el mecanismo.</td>
+    </tr>
+  </table>
+
+  <h3>Trabajo natural a continuación</h3>
+
+  <ol>
+    <li>Escribir los flujos reales de la aplicación objetivo con <code>dump-ui.sh</code>, empezando por <code>verifyFlow</code>.</li>
+    <li>Resolver DNS dentro de Android con Private DNS sobre TCP.</li>
+    <li>Alinear <code>scripts/testGateway.ts</code> con la política de red del runtime: hoy levanta la pasarela sin aplicarla, así que su veredicto y el del worker pueden divergir.</li>
+    <li>Una corrida de volumen sostenido que respalde el reporte por región con números propios.</li>
+  </ol>
+
+  <p style="margin-top:26px; color:var(--ink-faint); font-size:9pt; border-top:1px solid var(--rule); padding-top:10px">
+    Documento generado desde el repositorio en la revisión indicada en la portada.
+    Las secciones 7 y 9 reflejan hallazgos obtenidos contra la máquina de
+    producción y son las que conviene releer antes de tocar cualquier host nuevo.
+  </p>
+</section>

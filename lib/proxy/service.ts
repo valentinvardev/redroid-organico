@@ -68,6 +68,8 @@ export async function createProxy(userId: string, raw: unknown): Promise<ProxyWi
         port: input.port,
         username: input.username,
         password: input.password ? seal(input.password) : null,
+        timezone: input.timezone,
+        locale: input.locale,
       },
       include: withUsage,
     });
@@ -111,6 +113,8 @@ export async function updateProxy(
     host: patch.data.host ?? existing.host,
     port: patch.data.port ?? existing.port,
     username: patch.data.username !== undefined ? patch.data.username : existing.username,
+    timezone: patch.data.timezone !== undefined ? patch.data.timezone : existing.timezone,
+    locale: patch.data.locale !== undefined ? patch.data.locale : existing.locale,
     // The stored password is an envelope, not a string, so it cannot take part
     // in the merge. A placeholder stands in for "there is one" purely so the
     // cross-field check sees the truth.
@@ -132,6 +136,8 @@ export async function updateProxy(
         host: input.host,
         port: input.port,
         username: input.username,
+        timezone: input.timezone,
+        locale: input.locale,
         ...(changesPassword ? { password: input.password ? seal(input.password) : null } : {}),
       },
       include: withUsage,
@@ -211,5 +217,7 @@ export function openProxy(proxy: Proxy): ProxyRuntimeConfig {
     port: proxy.port,
     username: proxy.username,
     password: proxy.password ? openSecret<string>(proxy.password) : null,
+    timezone: proxy.timezone,
+    locale: proxy.locale,
   };
 }

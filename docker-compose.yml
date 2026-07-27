@@ -3,6 +3,9 @@ name: redroid-organico
 services:
   postgres:
     image: postgres:16-alpine
+    # Vuelve solo tras un reboot del host / stop-start de EC2. Sin esto el
+    # datastore queda abajo y la app falla toda query contra 127.0.0.1:5433.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: redroid
       POSTGRES_PASSWORD: redroid
@@ -21,6 +24,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     # appendonly keeps delayed/scheduled jobs across a restart; without it a
     # container bounce silently drops everything not yet picked up.
     command: ["redis-server", "--appendonly", "yes"]
@@ -129,6 +133,7 @@ services:
   # Appium. `-a` makes it listen on all interfaces instead of loopback only.
   adb-server:
     profiles: ["android"]
+    restart: unless-stopped
     build:
       context: .
       target: runtime
@@ -158,6 +163,7 @@ services:
 
   appium:
     profiles: ["android"]
+    restart: unless-stopped
     # Built rather than pulled: the published appium/appium tags are amd64-only,
     # which on an ARM host means qemu emulation for the server and its adb.
     build:

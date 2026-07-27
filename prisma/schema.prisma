@@ -149,6 +149,17 @@ model Proxy {
   /// logged, never returned by the API. See lib/crypto/secretBox.ts.
   password Bytes?
 
+  /// IANA zone the devices leaving through this proxy should report, e.g.
+  /// `America/Chicago`. A session that claims to be in Dallas with the clock in
+  /// GMT-3 contradicts itself, and the contradiction is free to notice — the
+  /// exit address decides where the device is supposed to be, so the story it
+  /// tells travels with the proxy rather than with the account.
+  timezone String?
+
+  /// BCP-47 tag, e.g. `en-US`. Same reasoning. Applied as a property, so it
+  /// takes effect on the device's next boot rather than the current one.
+  locale String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

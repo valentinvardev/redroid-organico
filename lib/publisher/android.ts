@@ -29,6 +29,7 @@ import {
 } from '@/lib/android/appium';
 import { captureEvidence } from '@/lib/android/evidence';
 import { EgressLeakError, EgressUnreachableError } from '@/lib/android/egressCheck';
+import { describeLocation } from '@/lib/android/geo';
 import { redactProxyUrl, type ProxyRuntimeConfig } from '@/lib/proxy/config';
 import { runUiFlow, uiFlowSchema, type UiFlowResult, type UiStep, UiStepError } from '@/lib/android/uiFlow';
 import { DEFAULT_FLOW_TYPE, isDefaultFlow } from '@/lib/jobs/flowType';
@@ -381,11 +382,18 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
 
       const serial = acquired.serial ?? credentials.deviceSerial ?? 'unknown';
 
+      // Looked up once, here, rather than by the browser: the dashboard would
+      // have to ask a third party from the operator's own connection, and the
+      // address it is describing is the device's, not theirs.
+      const egressLocation = acquired.egressIp ? await describeLocation(acquired.egressIp) : null;
+
       await request.onDeviceReady({
         serial,
         adbHost: credentials.adbHost,
         adbPort: credentials.adbPort,
         viewerUrl: viewerUrlFor(serial),
+        egressIp: acquired.egressIp,
+        egressLocation: egressLocation ?? undefined,
       });
 
       const outcome = await request.awaitHuman();

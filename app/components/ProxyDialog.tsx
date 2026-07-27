@@ -11,6 +11,8 @@ export interface ProxySummary {
   port: number;
   username: string | null;
   hasPassword: boolean;
+  timezone: string | null;
+  locale: string | null;
   accountCount?: number;
 }
 
@@ -31,6 +33,8 @@ interface FormState {
   port: string;
   username: string;
   password: string;
+  timezone: string;
+  locale: string;
 }
 
 const EMPTY_FORM: FormState = {
@@ -40,6 +44,8 @@ const EMPTY_FORM: FormState = {
   port: '',
   username: '',
   password: '',
+  timezone: '',
+  locale: '',
 };
 
 /** Same shape the worker builds, minus the password: enough to recognise a proxy. */
@@ -142,6 +148,8 @@ export function ProxyDialog({ accountId, accountName, currentProxyId, onSaved, o
       host: form.host,
       port: form.port,
       username: form.username,
+      timezone: form.timezone,
+      locale: form.locale,
       ...(keepsStoredPassword ? {} : { password: form.password.length > 0 ? form.password : null }),
     };
 
@@ -280,6 +288,8 @@ export function ProxyDialog({ accountId, accountName, currentProxyId, onSaved, o
                           port: String(proxy.port),
                           username: proxy.username ?? '',
                           password: '',
+                          timezone: proxy.timezone ?? '',
+                          locale: proxy.locale ?? '',
                         },
                       })
                     }
@@ -536,6 +546,32 @@ function ProxyForm({
           />
         </label>
       </div>
+
+      <div className="proxy-grid">
+        <label className="field">
+          <span>Zona horaria</span>
+          <input
+            value={form.timezone}
+            onChange={(event) => set({ timezone: event.target.value })}
+            placeholder="America/Chicago"
+          />
+        </label>
+
+        <label className="field">
+          <span>Idioma</span>
+          <input
+            value={form.locale}
+            onChange={(event) => set({ locale: event.target.value })}
+            placeholder="en-US"
+          />
+        </label>
+      </div>
+
+      <p className="hint">
+        Opcionales, y del proxy y no de la cuenta: la dirección de salida es la que decide
+        dónde dice estar el teléfono. Un dispositivo que sale en Dallas con el reloj en
+        GMT&#8209;3 se contradice solo. El idioma se aplica en el arranque siguiente.
+      </p>
 
       {form.type === 'HTTP' ? (
         <p className="hint">

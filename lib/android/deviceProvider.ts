@@ -24,6 +24,13 @@ export interface AcquiredDevice {
   /** What ADB and Appium's `udid` must both be pointed at. */
   serial: string | undefined;
   /**
+   * The address the device was measured leaving from, when a proxy was in play
+   * and the check ran. Carried out of here rather than re-measured later: it is
+   * the number the egress gate already proved, and asking twice could answer
+   * differently on a rotating proxy.
+   */
+  egressIp?: string;
+  /**
    * Returns the device. Must never throw and must never be skipped — this is
    * what stops a failed run from leaving an Android instance behind.
    */

@@ -289,3 +289,55 @@ describe('proxy service', () => {
     assert.equal(await prisma.proxy.count({ where: { userId: doomed.id } }), 0);
   });
 });
+
+describe('device persona on a proxy', () => {
+  let userId: string;
+
+  before(async () => {
+    await reset();
+    userId = (await createUser()).id;
+  });
+
+  after(async () => {
+    await reset();
+  });
+
+  it('accepts an IANA zone and rejects what people write instead', () => {
+    const base = { label: 'p', type: 'SOCKS5', host: 'gate.example.com', port: 1080 };
+
+    assert.equal(proxyInputSchema.safeParse({ ...base, timezone: 'America/Chicago' }).success, true);
+    assert.equal(proxyInputSchema.safeParse({ ...base, timezone: '' }).success, true, 'optional');
+
+    // The two forms people reach for first, and neither is a zone: an offset
+    // has no daylight saving and an abbreviation is ambiguous across countries.
+    for (const wrong of ['GMT-5', 'CST', 'Chicago']) {
+      const parsed = proxyInputSchema.safeParse({ ...base, timezone: wrong });
+      assert.equal(parsed.success, false, `${wrong} should be rejected`);
+      assert.match(parsed.error?.issues[0].message ?? '', /IANA/);
+    }
+  });
+
+  it('accepts a BCP-47 tag and rejects a sentence', () => {
+    const base = { label: 'p', type: 'SOCKS5', host: 'gate.example.com', port: 1080 };
+
+    assert.equal(proxyInputSchema.safeParse({ ...base, locale: 'en-US' }).success, true);
+    assert.equal(proxyInputSchema.safeParse({ ...base, locale: 'es' }).success, true);
+    assert.equal(proxyInputSchema.safeParse({ ...base, locale: 'English (US)' }).success, false);
+  });
+
+  it('carries the region through to the worker, where the device reads it', async () => {
+    const created = await createProxy(userId, {
+      label: 'Dallas',
+      type: 'SOCKS5',
+      host: 'gate.example.com',
+      port: 1080,
+      timezone: 'America/Chicago',
+      locale: 'en-US',
+    });
+
+    const runtime = openProxy(await prisma.proxy.findUniqueOrThrow({ where: { id: created.id } }));
+
+    assert.equal(runtime.timezone, 'America/Chicago');
+    assert.equal(runtime.locale, 'en-US');
+  });
+});

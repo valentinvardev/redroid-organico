@@ -1088,3 +1088,29 @@ input[type='file']::file-selector-button {
   white-space: pre-wrap;
   overflow-x: auto;
 }
+
+/* --- Egress badge ----------------------------------------------------------- */
+
+.egress-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.egress-badge code {
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.egress-badge-bare {
+  color: var(--amber);
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}

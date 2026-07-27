@@ -113,6 +113,8 @@ function Body({
         <div className="onboarding-body onboarding-live">
           {state.expiresAt ? <Countdown expiresAt={state.expiresAt} startedAt={state.startedAt} /> : null}
 
+          <Egress ip={state.endpoint.egressIp} location={state.endpoint.egressLocation} />
+
           <Screen viewerUrl={state.endpoint.viewerUrl} serial={state.endpoint.serial} />
 
           <footer className="onboarding-actions">
@@ -181,6 +183,33 @@ function Body({
 
 function Spinner() {
   return <div className="onboarding-spinner" aria-hidden="true" />;
+}
+
+/**
+ * Where this phone appears from, while it is being used.
+ *
+ * The number is measured, not configured: it is what the device itself answered
+ * when the egress check asked, so it also doubles as the visible proof that the
+ * proxy is in effect. Absent means the account has no proxy — worth saying out
+ * loud rather than leaving blank, because "leaves through this server" is a
+ * fact somebody about to log in should have.
+ */
+function Egress({ ip, location }: { ip?: string; location?: string }) {
+  if (!ip) {
+    return (
+      <p className="egress-badge egress-badge-bare">
+        Sin proxy: esta sesión sale por la dirección del servidor.
+      </p>
+    );
+  }
+
+  return (
+    <p className="egress-badge">
+      <span className="pill pill-ok">en línea desde</span>
+      <code>{ip}</code>
+      {location ? <span className="hint">{location}</span> : null}
+    </p>
+  );
 }
 
 /** The device screen, or an explanation of why there isn't one. */

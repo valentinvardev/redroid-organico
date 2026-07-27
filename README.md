@@ -398,6 +398,28 @@ Consecuencias que conviene tener presentes:
   `attached` no hay namespace que apropiarse, así que el job falla con
   `proxy_requires_ephemeral_device` en vez de publicar desde la IP del host.
 
+#### La identidad del teléfono viaja con el proxy
+
+Un proxy puede llevar `timezone` (zona IANA) y `locale` (etiqueta BCP-47), y el
+worker se los aplica al dispositivo antes de manejar la app. Van en el **proxy y
+no en la cuenta** a propósito: la dirección de salida es la que decide dónde dice
+estar el teléfono, así que mover una cuenta a otra salida tiene que mover su
+historia con ella y no dejarla insistiendo con la anterior.
+
+Un dispositivo que sale en Dallas con el reloj en GMT-3 se contradice solo, y la
+contradicción es gratis de notar del otro lado.
+
+Ninguno de los dos es obligatorio y **ninguno puede voltear un job**: debilitar
+un disfraz no es lo mismo que romper el aislamiento, y sólo lo segundo justifica
+fallar. Si el dispositivo rechaza la propiedad queda un `WARN`. El idioma se lee
+en el arranque, así que se aplica en la corrida siguiente; la zona horaria toma
+efecto en el momento, y se verifica leyéndola de vuelta en vez de confiar en el
+código de salida de `setprop`.
+
+Mientras hay una vinculación en curso, el panel muestra **la IP por la que sale
+ese teléfono y dónde está** — el número no es el configurado sino el que midió el
+gate, así que además funciona como prueba visible de que el proxy está activo.
+
 La contraseña se guarda cifrada con la misma `CREDENTIALS_KEY` que el resto de
 las credenciales, nunca vuelve por la API y en los logs aparece redactada
 (`socks5://user:***@gate:1080`). El bloque `proxyGateway` de las credenciales

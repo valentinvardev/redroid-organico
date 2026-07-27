@@ -82,6 +82,14 @@ export interface DeviceEndpoint {
   adbPort?: number;
   /** Built from DEVICE_VIEWER_URL_TEMPLATE; absent when no bridge is configured. */
   viewerUrl?: string;
+  /**
+   * Where this phone appears from while someone is using it. Shown next to the
+   * screen because it is the context that decides whether the app's behaviour
+   * makes sense: a login challenge is expected from a new region and odd from
+   * the usual one.
+   */
+  egressIp?: string;
+  egressLocation?: string;
 }
 
 export interface OnboardingRequest {

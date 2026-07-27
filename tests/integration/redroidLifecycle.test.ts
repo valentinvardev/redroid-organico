@@ -541,6 +541,52 @@ describe('EphemeralRedroidProvider with a proxy', () => {
     await assert.rejects(subject.acquire(context()), /has no proxyGateway.egressCheck.probeBinary/);
   });
 
+  it('aligns the device clock and locale with the region it exits from', async () => {
+    // A session exiting in Dallas with the clock in GMT-3 contradicts itself,
+    // and the contradiction is free to notice from the other side. The values
+    // hang off the proxy, so moving an account to another egress moves its
+    // story with it.
+    const { subject, device } = provider({
+      proxy: { ...proxy, timezone: 'America/Chicago', locale: 'en-US' },
+      device: { egressIp: '203.0.113.7' },
+    });
+
+    const acquired = await subject.acquire(context());
+
+    assert.equal(device.props.get('persist.sys.timezone'), 'America/Chicago');
+    assert.equal(device.props.get('persist.sys.locale'), 'en-US');
+
+    await acquired.release();
+  });
+
+  it('warns instead of failing when the device refuses to keep the property', async () => {
+    // Weakening a disguise is not the same as breaking the isolation: only the
+    // second is worth failing a job over.
+    const { subject } = provider({
+      proxy: { ...proxy, timezone: 'America/Chicago' },
+      device: { egressIp: '203.0.113.7', propsReadOnly: true },
+    });
+
+    const acquired = await subject.acquire(context());
+    assert.ok(acquired.serial, 'a rejected time zone must not cost the run');
+
+    await acquired.release();
+  });
+
+  it('touches no property when the proxy carries no region', async () => {
+    const { subject, device } = provider({ proxy, device: { egressIp: '203.0.113.7' } });
+
+    const acquired = await subject.acquire(context());
+
+    assert.equal(device.props.size, 0);
+    assert.equal(
+      device.probes.some((probe) => probe[0] === 'setprop'),
+      false,
+    );
+
+    await acquired.release();
+  });
+
   it('carries the namespace’s state in the error when nothing at all answers', async () => {
     // The containers are destroyed in a `finally`, so anything not captured
     // here is gone by the time someone reads the failure. Counters on the ACL

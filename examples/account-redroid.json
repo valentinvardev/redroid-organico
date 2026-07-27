@@ -33,11 +33,12 @@
       "harden": true,
       "disableIpv6": true,
 
-      "//egressCheck": "Asks the device what its own address looks like from outside and fails the job if it matches this host's. Use an http:// URL if the image has no curl and has to fall back to busybox wget.",
+      "//egressCheck": "Asks the device what its own address looks like from outside and fails the job if it matches this host's. probeBinary is a statically linked curl for the device architecture: AOSP ships no HTTP client, and the copy is made once per account into its session volume.",
       "egressCheck": {
         "enabled": true,
-        "url": "https://api.ipify.org",
-        "timeoutSeconds": 20
+        "url": "http://api.ipify.org",
+        "timeoutSeconds": 20,
+        "probeBinary": "/home/ubuntu/redroid/bin/curl-aarch64"
       }
     }
   },

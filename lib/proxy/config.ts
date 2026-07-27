@@ -27,6 +27,32 @@ export interface ProxyRuntimeConfig {
   port: number;
   username?: string | null;
   password?: string | null;
+  /** IANA zone the device should report while it exits here. */
+  timezone?: string | null;
+  /** BCP-47 tag, applied as a property for the device's next boot. */
+  locale?: string | null;
+}
+
+/**
+ * Asks the runtime whether the zone exists, rather than carrying a list that
+ * goes stale every time a country changes its mind about daylight saving.
+ */
+function isKnownTimezone(zone: string): boolean {
+  // The runtime alone is too permissive: ICU still answers to legacy
+  // abbreviations like `CST`, which name a UTC offset rather than a place and
+  // therefore carry no daylight saving rules — the device would be right half
+  // the year. Requiring the Area/Location form rejects those, and `UTC` is the
+  // one legitimate name without a slash.
+  if (zone !== 'UTC' && !zone.includes('/')) {
+    return false;
+  }
+
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -111,6 +137,18 @@ export const proxyConnectionSchema = z.object({
   // Deliberately not trimmed: a password may legitimately end in a space, and
   // silently changing it produces an authentication failure nobody can see.
   password: optionalSecret,
+
+  timezone: optionalSecret
+    .transform((value) => value?.trim() || null)
+    .refine((value) => value === null || isKnownTimezone(value), {
+      message: 'Not a known IANA time zone — it looks like "America/Chicago", not "GMT-5" or "CST"',
+    }),
+
+  locale: optionalSecret
+    .transform((value) => value?.trim() || null)
+    .refine((value) => value === null || /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(value), {
+      message: 'Not a BCP-47 language tag — it looks like "en-US"',
+    }),
 });
 
 const proxyFieldsSchema = proxyConnectionSchema.extend({
