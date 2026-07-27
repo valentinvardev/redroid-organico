@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { OnboardingDialog } from './OnboardingDialog';
 import { ProxyDialog, type ProxySummary } from './ProxyDialog';
+import { FlowsDialog } from './FlowsDialog';
 import { NewAccountDialog } from './NewAccountDialog';
 
 interface Account {
@@ -28,6 +29,7 @@ export function AccountList() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [linking, setLinking] = useState<Account | null>(null);
   const [routing, setRouting] = useState<Account | null>(null);
+  const [editingFlows, setEditingFlows] = useState<Account | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,6 +92,15 @@ export function AccountList() {
                 */}
                 <button
                   type="button"
+                  className="ghost"
+                  onClick={() => setEditingFlows(account)}
+                  title="Editar los flujos de automatización"
+                >
+                  Flujos
+                </button>
+
+                <button
+                  type="button"
                   className="ghost account-proxy"
                   onClick={() => setRouting(account)}
                   title={
@@ -136,6 +147,14 @@ export function AccountList() {
             // plain fetch, so it needs a nudge that the SSE stream does not give.
             void load();
           }}
+        />
+      ) : null}
+
+      {editingFlows ? (
+        <FlowsDialog
+          accountId={editingFlows.id}
+          accountName={editingFlows.name}
+          onClose={() => setEditingFlows(null)}
         />
       ) : null}
 

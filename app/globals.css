@@ -1114,3 +1114,20 @@ input[type='file']::file-selector-button {
   border-color: currentColor;
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
+
+/* --- Flows editor ----------------------------------------------------------- */
+
+.flows-panel {
+  max-width: 820px;
+}
+
+.flows-editor {
+  min-height: 46vh;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  tab-size: 2;
+}
