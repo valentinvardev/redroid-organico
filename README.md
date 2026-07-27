@@ -404,6 +404,24 @@ las credenciales, nunca vuelve por la API y en los logs aparece redactada
 —imagen, `logLevel`, `env` extra— sólo describe cómo se construye el gateway; el
 proxy en sí vive en la base.
 
+#### La URL del visor no lleva una IP
+
+`DEVICE_VIEWER_URL_TEMPLATE` acepta `{host}` además de `{serial}` y
+`{serialDouble}`, y **conviene usarlo**: la URL la arma el worker, que no tiene
+request que mirar y por lo tanto no puede saber por qué dirección entró el
+operador al panel. Una plantilla con un host literal anda solo desde donde
+estabas cuando la configuraste.
+
+```
+DEVICE_VIEWER_URL_TEMPLATE="http://{host}:8000/#!action=stream&udid={serial}&player=broadway&ws=ws%3A%2F%2F{host}%3A8000%2F%3Faction%3Dproxy-adb%26remote%3Dtcp%253A8886%26udid%3D{serialDouble}"
+```
+
+El navegador reemplaza `{host}` por la dirección desde la que cargó la página,
+así que el mismo valor sirve por túnel SSH, por IP pública o por dominio — y
+sobrevive a que la máquina cambie de dirección, que es el caso que rompe el
+visor sin romper nada más: el iframe apunta a un host que en el navegador
+significa otra cosa, y queda en blanco mientras el resto del panel funciona.
+
 Endpoints, todos bajo la sesión del usuario dueño de la cuenta:
 
 | Ruta | Qué hace |

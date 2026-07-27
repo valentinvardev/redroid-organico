@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { Countdown } from './Countdown';
 import { useOnboarding, useViewerReachable, type OnboardingState } from './useOnboarding';
+import { browserHost, resolveViewerUrl } from './viewerUrl';
 
 interface Props {
   accountId: string;
@@ -183,7 +184,11 @@ function Spinner() {
 }
 
 /** The device screen, or an explanation of why there isn't one. */
-function Screen({ viewerUrl, serial }: { viewerUrl?: string; serial: string }) {
+function Screen({ viewerUrl: template, serial }: { viewerUrl?: string; serial: string }) {
+  // Resolved against the address this page was loaded from, so one template
+  // works through an SSH tunnel, a public IP or a domain — and survives the box
+  // getting a new address. See app/components/viewerUrl.ts.
+  const viewerUrl = resolveViewerUrl(template, browserHost());
   const reachable = useViewerReachable(viewerUrl);
 
   if (!viewerUrl) {
