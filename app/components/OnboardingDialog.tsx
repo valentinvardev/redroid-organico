@@ -113,7 +113,11 @@ function Body({
         <div className="onboarding-body onboarding-live">
           {state.expiresAt ? <Countdown expiresAt={state.expiresAt} startedAt={state.startedAt} /> : null}
 
-          <Egress ip={state.endpoint.egressIp} location={state.endpoint.egressLocation} />
+          <Egress
+            ip={state.endpoint.egressIp}
+            location={state.endpoint.egressLocation}
+            kind={state.endpoint.egressKind}
+          />
 
           <Screen viewerUrl={state.endpoint.viewerUrl} serial={state.endpoint.serial} />
 
@@ -194,7 +198,33 @@ function Spinner() {
  * loud rather than leaving blank, because "leaves through this server" is a
  * fact somebody about to log in should have.
  */
-function Egress({ ip, location }: { ip?: string; location?: string }) {
+type EgressKind = 'hosting' | 'proxy' | 'mobile' | 'unflagged';
+
+/**
+ * What the address is, not who blocked it. `unflagged` is not called
+ * "residential" on purpose: the absence of a datacentre marking is evidence,
+ * not proof, and a badge that overstates it is worse than no badge.
+ */
+const KIND_COPY: Record<EgressKind, { label: string; tone: string; hint: string }> = {
+  hosting: {
+    label: 'datacenter',
+    tone: 'warn',
+    hint: 'Rango de hosting. Las plataformas lo discuten: esperá desafíos de login.',
+  },
+  proxy: {
+    label: 'proxy conocido',
+    tone: 'bad',
+    hint: 'Publicada en listas de proxies. Es la peor señal posible para una cuenta.',
+  },
+  mobile: { label: 'móvil', tone: 'ok', hint: 'Rango de operador móvil, el menos cuestionado.' },
+  unflagged: {
+    label: 'sin marcas',
+    tone: 'ok',
+    hint: 'Sin marcas de datacenter ni de proxy. Compatible con residencial.',
+  },
+};
+
+function Egress({ ip, location, kind }: { ip?: string; location?: string; kind?: EgressKind }) {
   if (!ip) {
     return (
       <p className="egress-badge egress-badge-bare">
@@ -203,10 +233,16 @@ function Egress({ ip, location }: { ip?: string; location?: string }) {
     );
   }
 
+  const classified = kind ? KIND_COPY[kind] : null;
+
   return (
     <p className="egress-badge">
-      <span className="pill pill-ok">en línea desde</span>
       <code>{ip}</code>
+      {classified ? (
+        <span className={`pill pill-${classified.tone}`} title={classified.hint}>
+          {classified.label}
+        </span>
+      ) : null}
       {location ? <span className="hint">{location}</span> : null}
     </p>
   );

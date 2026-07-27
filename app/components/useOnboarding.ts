@@ -11,6 +11,7 @@ export interface DeviceEndpoint {
   /** Measured by the egress check, not guessed: where this phone comes out. */
   egressIp?: string;
   egressLocation?: string;
+  egressKind?: 'hosting' | 'proxy' | 'mobile' | 'unflagged';
 }
 
 /** The fields of a serialized job this flow cares about. */

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveViewerUrl } from '@/app/components/viewerUrl';
-import { describeLocation, resetLocationCache } from '@/lib/android/geo';
+import { describeAddress, resetLocationCache } from '@/lib/android/geo';
 
 describe('device viewer URL', () => {
   it('resolves {host} against the address the dashboard was loaded from', () => {
@@ -28,41 +28,77 @@ describe('device viewer URL', () => {
   });
 });
 
-describe('egress location', () => {
-  it('describes an address in a way a person can read at a glance', async () => {
+describe('egress address', () => {
+  const answer = (body: Record<string, unknown>) =>
+    (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+
+  it('reads the place and what the address is', async () => {
     resetLocationCache();
 
-    const fetchImpl = (async () =>
-      new Response(
-        JSON.stringify({
+    assert.deepEqual(
+      await describeAddress(
+        '74.0.102.132',
+        5_000,
+        answer({
+          status: 'success',
           city: 'Dallas',
-          region: 'Texas',
-          country_code: 'US',
-          connection: { org: 'Datacamp Limited' },
+          regionName: 'Texas',
+          country: 'United States',
+          isp: 'Datacamp Limited',
+          hosting: true,
+          proxy: false,
+          mobile: false,
         }),
-        { status: 200 },
-      )) as unknown as typeof fetch;
-
-    assert.equal(
-      await describeLocation('74.0.102.132', 5_000, fetchImpl),
-      'Dallas, Texas, US · Datacamp Limited',
+      ),
+      { location: 'Dallas, Texas, United States · Datacamp Limited', kind: 'hosting' },
     );
   });
 
-  it('answers null rather than failing a run the lookup is only decorating', async () => {
+  it('ranks a listed proxy above a hosting range', async () => {
+    // An address can be both. Being on a proxy list is the louder signal:
+    // somebody already published this address as one.
+    resetLocationCache();
+
+    const { kind } = await describeAddress(
+      '203.0.113.7',
+      5_000,
+      answer({ status: 'success', hosting: true, proxy: true, mobile: false }),
+    );
+
+    assert.equal(kind, 'proxy');
+  });
+
+  it('says unflagged rather than claiming residential', async () => {
+    // The absence of a marking is evidence, not proof, and a badge that
+    // overstates it is worse than no badge.
+    resetLocationCache();
+
+    const { kind } = await describeAddress(
+      '198.51.100.1',
+      5_000,
+      answer({ status: 'success', hosting: false, proxy: false, mobile: false }),
+    );
+
+    assert.equal(kind, 'unflagged');
+  });
+
+  it('answers empty rather than failing a run it is only decorating', async () => {
     resetLocationCache();
 
     let calls = 0;
-    const fetchImpl = (async () => {
+    const failing = (async () => {
       calls += 1;
       throw new Error('ENOTFOUND');
     }) as unknown as typeof fetch;
 
-    assert.equal(await describeLocation('203.0.113.7', 5_000, fetchImpl), null);
+    assert.deepEqual(await describeAddress('203.0.113.9', 5_000, failing), {
+      location: null,
+      kind: null,
+    });
 
-    // Cached even when it failed: an address does not move, and a service that
-    // is down stays down for the length of a session.
-    assert.equal(await describeLocation('203.0.113.7', 5_000, fetchImpl), null);
+    // Cached even when it failed: a service that is refusing now will refuse
+    // for the length of a session.
+    await describeAddress('203.0.113.9', 5_000, failing);
     assert.equal(calls, 1);
 
     resetLocationCache();

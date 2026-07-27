@@ -90,6 +90,13 @@ export interface DeviceEndpoint {
    */
   egressIp?: string;
   egressLocation?: string;
+  /**
+   * What the address is, not who blocked it: `hosting` means a datacentre
+   * range, which is the marking platforms argue with. Nothing outside a
+   * platform knows whether it banned an address, and a field implying
+   * otherwise would be worse than none.
+   */
+  egressKind?: 'hosting' | 'proxy' | 'mobile' | 'unflagged';
 }
 
 export interface OnboardingRequest {

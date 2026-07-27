@@ -29,7 +29,7 @@ import {
 } from '@/lib/android/appium';
 import { captureEvidence } from '@/lib/android/evidence';
 import { EgressLeakError, EgressUnreachableError } from '@/lib/android/egressCheck';
-import { describeLocation } from '@/lib/android/geo';
+import { describeAddress } from '@/lib/android/geo';
 import { redactProxyUrl, type ProxyRuntimeConfig } from '@/lib/proxy/config';
 import { runUiFlow, uiFlowSchema, type UiFlowResult, type UiStep, UiStepError } from '@/lib/android/uiFlow';
 import { DEFAULT_FLOW_TYPE, isDefaultFlow } from '@/lib/jobs/flowType';
@@ -385,7 +385,9 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
       // Looked up once, here, rather than by the browser: the dashboard would
       // have to ask a third party from the operator's own connection, and the
       // address it is describing is the device's, not theirs.
-      const egressLocation = acquired.egressIp ? await describeLocation(acquired.egressIp) : null;
+      const address = acquired.egressIp
+        ? await describeAddress(acquired.egressIp)
+        : { location: null, kind: null };
 
       await request.onDeviceReady({
         serial,
@@ -393,8 +395,20 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
         adbPort: credentials.adbPort,
         viewerUrl: viewerUrlFor(serial),
         egressIp: acquired.egressIp,
-        egressLocation: egressLocation ?? undefined,
+        egressLocation: address.location ?? undefined,
+        egressKind: address.kind ?? undefined,
       });
+
+      // On the job as well as on screen: "which kind of address did this
+      // account publish from" is the first question asked when one gets
+      // flagged, and by then the dialog is long gone.
+      if (acquired.egressIp) {
+        await log.info('Device egress address', {
+          egressIp: acquired.egressIp,
+          location: address.location,
+          kind: address.kind,
+        });
+      }
 
       const outcome = await request.awaitHuman();
 
