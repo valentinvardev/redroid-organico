@@ -24,6 +24,19 @@ export const CREATED_AT_LABEL = 'redroid-organico.createdAt';
 export const ROLE_LABEL = 'redroid-organico.role';
 export const DEVICE_ROLE = 'device';
 export const GATEWAY_ROLE = 'egress-gateway';
+export const CAMERA_ROLE = 'camera-bridge';
+
+/**
+ * Which host `/dev/videoN` a job was lent, written on both the device and its
+ * camera bridge.
+ *
+ * A label rather than a registry of its own, because that makes the question
+ * "which cameras are taken" a `docker ps` and the answer survives a worker
+ * restart. The Redis lease in lib/android/cameraSlots.ts exists only to settle
+ * races between workers; this is the durable record it reconciles against, and
+ * the reason removing a container is all it takes to free the device.
+ */
+export const CAMERA_LABEL = 'redroid-organico.cameraIndex';
 
 export class DockerError extends Error {
   readonly stderr: string;

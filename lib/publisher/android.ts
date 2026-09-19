@@ -20,6 +20,7 @@ import {
   type DeviceProvider,
 } from '@/lib/android/deviceProvider';
 import { EphemeralRedroidProvider, redroidConfigSchema } from '@/lib/android/redroidProvider';
+import { EmulatorDeviceProvider, emulatorConfigSchema } from '@/lib/android/emulatorProvider';
 import {
   AppiumProtocolError,
   AppiumTransportError,
@@ -58,6 +59,18 @@ export const androidCredentialsSchema = z.object({
 
   /** Present means: create a throwaway Android container for every job. */
   redroid: redroidConfigSchema.optional(),
+
+  /**
+   * The alternative to `redroid`, for accounts whose app demands a camera:
+   * a containerised Android Emulator, which can be lent the operator's webcam.
+   *
+   * Not a per-job choice. The session volume is what onboarding produces and an
+   * AVD's is not portable to ReDroid, so an account that logs in here has to
+   * keep running here — moving it would mean logging in again on a different
+   * device, which is the signal that triggers re-verification. Setting both
+   * keys is refused rather than silently ordered.
+   */
+  emulator: emulatorConfigSchema.optional(),
 
   remoteVideoPath: z.string().min(1).startsWith('/').default('/sdcard/DCIM/upload.mp4'),
 
@@ -100,7 +113,17 @@ export const androidCredentialsSchema = z.object({
    * lie as the synthetic post id this driver used to return.
    */
   verifyFlow: uiFlowSchema.optional(),
-});
+})
+  // Refused at the account's creation rather than resolved by precedence at job
+  // time. An account carrying both blocks has no correct reading: whichever one
+  // ran first would own the session volume, and the other would silently never
+  // be used until someone changed an unrelated default.
+  .refine((credentials) => !(credentials.redroid && credentials.emulator), {
+    message:
+      'Set either `redroid` or `emulator`, not both — the device backend is a property of the ' +
+      'account for its whole life, because the session a login produces is not portable between them.',
+    path: ['emulator'],
+  });
 
 export type AndroidCredentials = z.infer<typeof androidCredentialsSchema>;
 
@@ -239,6 +262,19 @@ function defaultProvider(
     });
   }
 
+  // Before the proxy check below, not after: this provider creates its own
+  // container and puts it inside the gateway's namespace exactly as ReDroid
+  // does, so a proxy is as enforceable here as it is there.
+  if (credentials.emulator) {
+    return new EmulatorDeviceProvider({
+      config: credentials.emulator,
+      proxy,
+      adbCommand: credentials.adbCommand,
+      adbServer,
+      bootTimeoutSeconds: credentials.bootTimeoutSeconds,
+    });
+  }
+
   // An account with a proxy cannot run on a device this system did not create:
   // the isolation comes from owning the container's network namespace, and
   // there is no namespace to own here. Refusing is the only honest answer —
@@ -249,7 +285,7 @@ function defaultProvider(
       'proxy_requires_ephemeral_device',
       'This account is assigned a proxy, which is enforced by running the device inside a gateway ' +
         "container's network namespace. That is only possible for containers this worker creates, so " +
-        'the account needs a `redroid` block in its credentials — or no proxy.',
+        'the account needs a `redroid` or `emulator` block in its credentials — or no proxy.',
     );
   }
 

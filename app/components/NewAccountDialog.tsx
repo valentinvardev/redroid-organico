@@ -157,6 +157,19 @@ export function NewAccountDialog({ accounts, onCreated, onClose }: Props) {
             config is one a job can execute.
           </p>
 
+          {/* A hint rather than a second template: an example carrying both
+              blocks would be refused by the very validation it illustrates. */}
+          <p className="hint">
+            If the app asks for a selfie or a video to log in, replace the <code>redroid</code> block with{' '}
+            <code>
+              &quot;emulator&quot;: {'{'} &quot;image&quot;: &quot;redroid-organico/emulator:34&quot;,
+              &quot;connectVia&quot;: &quot;container-name&quot;, &quot;network&quot;: &quot;redroid-net&quot;,
+              &quot;cameraNetwork&quot;: &quot;redroid-camera-net&quot;, &quot;camera&quot;: {'{}'} {'}'}
+            </code>{' '}
+            — an emulator that can borrow your webcam. The choice is permanent for the account: a login made on one
+            does not carry over to the other.
+          </p>
+
           {error ? <pre className="account-config-error">{error}</pre> : null}
 
           <div className="onboarding-actions">

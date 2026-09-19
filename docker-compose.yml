@@ -218,6 +218,52 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Where the operator's webcam lands on its way to a device.
+  #
+  # The browser publishes to it with WHIP; a per-job ffmpeg bridge reads the
+  # same stream back over RTSP and writes it into the v4l2loopback device the
+  # emulator was lent. Only accounts with an `emulator.camera` block use any of
+  # this — see lib/android/cameraBridge.ts.
+  mediamtx:
+    profiles: ["android"]
+    restart: unless-stopped
+    image: bluenviron/mediamtx:1.9.3
+    environment:
+      # Everything off but what is used. A media server with RTMP and HLS
+      # listening is three more ways in than this needs.
+      MTX_RTMP: "no"
+      MTX_HLS: "no"
+      MTX_SRT: "no"
+      MTX_RTSP: "yes"
+      MTX_WEBRTC: "yes"
+      # The control plane the worker polls to find out whether the operator
+      # actually granted their camera, before it leases a device for them.
+      MTX_API: "yes"
+      MTX_APIADDRESS: ":9997"
+      # The address the operator's browser sends media to. Without it MediaMTX
+      # advertises only the container's own bridge addresses as ICE candidates,
+      # which nothing outside Docker can reach: the offer is answered, the
+      # session looks established, and not one frame ever arrives. Set
+      # CAMERA_PUBLIC_HOST in .env to the instance's public address.
+      MTX_WEBRTCADDITIONALHOSTS: "${CAMERA_PUBLIC_HOST:-}"
+    ports:
+      # The worker runs on the host under systemd, so it reaches the API here.
+      # Loopback only, like adb: it reports every stream and who is publishing.
+      - "127.0.0.1:9997:9997"
+      # WHIP ingest, reached by the operator's browser. Behind the same TLS
+      # termination as the dashboard: getUserMedia needs a secure context, so
+      # a plain-HTTP deployment cannot use this at all.
+      - "8889:8889"
+      # WebRTC media. UDP, and published on the host because an ICE candidate
+      # that does not resolve from the operator's network is a camera that
+      # connects and then never sends a frame.
+      - "8189:8189/udp"
+    networks:
+      # Published ports and the browser reach it here.
+      - default
+      # And this is where the bridges read from. Devices are never on it.
+      - redroid-camera
+
 volumes:
   postgres_data:
   redis_data:
@@ -244,4 +290,14 @@ networks:
   # though its container is privileged.
   redroid-control:
     name: redroid-control-net
+    internal: true
+
+  # Camera bridges and the media server they read from, and nothing else.
+  #
+  # `internal` for the same reason the control network is: a bridge has no
+  # business reaching the internet, and more to the point, keeping devices off
+  # this network is what stops an automated app from reading another account's
+  # webcam. Named explicitly so the worker can pass it to `docker run`.
+  redroid-camera:
+    name: redroid-camera-net
     internal: true

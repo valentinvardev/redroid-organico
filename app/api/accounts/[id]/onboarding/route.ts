@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getCurrentUserId } from '@/lib/auth/currentUser';
 import { guarded } from '@/lib/auth/apiGuard';
 import { JobConflictError, JobValidationError, createOnboardingJob } from '@/lib/jobs/service';
+import { accountLendsCamera } from '@/lib/accounts/service';
+import { cameraIngestUrl as cameraIngestUrlFor } from '@/lib/android/cameraIngest';
 import { serializeJob } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
@@ -22,8 +24,19 @@ export const POST = guarded(async (request: Request, { params }: { params: { id:
       idempotencyKey,
     });
 
+    // Sent with the job rather than later on the device endpoint: the worker
+    // will not start a device until the browser is already publishing, so this
+    // has to reach the client before anything exists to point it at.
+    const cameraIngestUrl = (await accountLendsCamera(userId, params.id))
+      ? cameraIngestUrlFor(job.id)
+      : undefined;
+
     return NextResponse.json(
-      { message: created ? 'Onboarding queued' : 'Onboarding already queued', job: serializeJob(job) },
+      {
+        message: created ? 'Onboarding queued' : 'Onboarding already queued',
+        job: serializeJob(job),
+        cameraIngestUrl,
+      },
       { status: created ? 202 : 200 },
     );
   } catch (error) {

@@ -1,6 +1,7 @@
 import { JobStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
+  CAMERA_LABEL,
   CREATED_AT_LABEL,
   DockerCli,
   GATEWAY_ROLE,
@@ -11,6 +12,7 @@ import {
   type ContainerSummary,
   type DockerClient,
 } from './docker';
+import { reconcileCameraSlots } from './cameraSlots';
 
 /**
  * A container younger than this is left alone even if its job does not look
@@ -79,6 +81,62 @@ async function jobIsActive(jobId: string): Promise<boolean> {
  *
  * Never throws: a broken Docker CLI must not stop the worker from starting.
  */
+/**
+ * Returns camera leases whose job is gone to the pool.
+ *
+ * Deliberately not part of the sweep above, for two reasons. Its result shape
+ * is a contract the tests assert verbatim, and — more importantly — the two
+ * answer different questions: the sweep asks "may this container be removed",
+ * while this asks "is this lease accounted for by anything at all". A lease is
+ * held for a moment before its container exists, so a lease with no container
+ * is only stale once its job is also dead.
+ *
+ * Run at worker startup, after recoverOrphans() has moved stranded rows out of
+ * the live statuses, so the liveness answers are trustworthy. Never throws: a
+ * broken Docker CLI must not stop the worker from starting.
+ */
+export async function reconcileCameraLeases(options: ReapOptions = {}): Promise<number[]> {
+  const docker = options.docker ?? new DockerCli();
+  const isActive = options.isJobActive ?? jobIsActive;
+  const log = options.log ?? ((message: string) => console.log(message));
+
+  let containers: ContainerSummary[];
+
+  try {
+    containers = await docker.listByLabel(OWNER_LABEL, OWNER_VALUE);
+  } catch (error) {
+    log(
+      `[reaper] could not list containers, skipping camera reconciliation: ${
+        error instanceof Error ? error.message : error
+      }`,
+    );
+    return [];
+  }
+
+  const held = new Set<number>();
+
+  for (const container of containers) {
+    const index = Number(container.labels[CAMERA_LABEL]);
+
+    if (Number.isInteger(index)) {
+      held.add(index);
+    }
+  }
+
+  try {
+    const freed = await reconcileCameraSlots(held, isActive);
+
+    if (freed.length > 0) {
+      log(`[reaper] returned ${freed.length} camera device(s) to the pool: ${freed.join(', ')}`);
+    }
+
+    return freed;
+  } catch (error) {
+    log(`[reaper] camera reconciliation failed: ${error instanceof Error ? error.message : error}`);
+    return [];
+  }
+}
+
 export async function reapAndroidContainers(options: ReapOptions = {}): Promise<ReapResult> {
   const docker = options.docker ?? new DockerCli();
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;

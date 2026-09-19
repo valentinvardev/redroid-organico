@@ -1,0 +1,91 @@
+# The Android Emulator in a container, for accounts whose app demands a camera.
+#
+# Built rather than pulled for the same reason as appium and ws-scrcpy: the
+# published emulator images are tied to specific SDK revisions and to a Google
+# registry, and the contract this image has to honour — ADB answering on 5555,
+# an AVD named by the provider, one video device — is ours, not theirs.
+#
+# Linux and KVM only. The emulator is QEMU: without /dev/kvm it falls back to
+# TCG and a boot that should take two minutes takes forty. On EC2 that means a
+# bare metal instance, or since February 2026 a virtual one launched with
+# `--cpu-options "NestedVirtualization=enabled"` — Intel families only
+# (M7i/M8i, C7i/C8i, R7i/R8i, I7i, X8i), which is why this image is x86_64.
+FROM eclipse-temurin:17-jdk-jammy
+
+# socat bridges the emulator's loopback-only ADB port to the container's
+# interface; xvfb gives the GPU path an X server to talk to even headless.
+# The rest are what the emulator links against on a slim base.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl unzip socat xvfb \
+      libpulse0 libnss3 libxcomposite1 libxcursor1 libxi6 libxtst6 libasound2 \
+      libglu1-mesa libgl1 libdrm2 libxdamage1 libxrandr2 \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/emulator:${PATH}"
+
+# Pinned together on purpose. The system image decides which API the AVD runs,
+# and the ARM translation that lets an arm64-only APK run on an x86_64 image
+# only exists from API 30 on — so dropping this to an older API silently breaks
+# accounts whose app ships no x86_64 build. Verify a new pin against the real
+# APK before bumping it.
+#
+# `google_apis_playstore`, not `google_apis`, and the difference is root. The
+# plain Google APIs image is debuggable: `adb root` works and it reports
+# ro.debuggable=1, which is among the first things a root-detection library
+# checks. The Play Store image is a `user` build signed with release keys and
+# refuses `adb root`. Nothing in this system needs root on the device — the
+# egress hardening runs from the gateway through `docker exec`, the probe lives
+# in /data/local/tmp, Appium and media pushes run as `shell` — so there is no
+# reason to ship the signal.
+ARG CMDLINE_TOOLS_VERSION=11076708
+ARG ANDROID_API=34
+ARG SYSTEM_IMAGE="system-images;android-34;google_apis_playstore;x86_64"
+
+RUN mkdir -p "${ANDROID_HOME}/cmdline-tools" \
+ && curl -fsSL -o /tmp/tools.zip \
+      "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" \
+ && unzip -q /tmp/tools.zip -d "${ANDROID_HOME}/cmdline-tools" \
+ && mv "${ANDROID_HOME}/cmdline-tools/cmdline-tools" "${ANDROID_HOME}/cmdline-tools/latest" \
+ && rm /tmp/tools.zip \
+ && yes | sdkmanager --licenses > /dev/null \
+ && sdkmanager --install "platform-tools" "emulator" "platforms;android-${ANDROID_API}" "${SYSTEM_IMAGE}" \
+ && adb version \
+ && emulator -version | head -1
+
+# The AVD is created at build time so a container start never downloads
+# anything. Its *userdata* is the part that must not live here: that is the
+# logged-in session, and it belongs in the per-account volume the provider
+# mounts at /avd. ANDROID_AVD_HOME points there, so the directory created now
+# is the template and the volume is what actually gets written.
+#
+# This leans on one piece of Docker behaviour worth knowing before changing
+# anything around it: an *empty named volume* mounted over a directory is first
+# filled with that directory's contents from the image. That is how a new
+# account's volume receives the template AVD. Two consequences:
+#  - a bind mount does not do this, and would boot with no AVD at all;
+#  - an existing volume never sees the image again, so changing the AVD here
+#    (device profile, API level) reaches new accounts only. Existing ones keep
+#    the AVD they were created with — which is also what keeps their session.
+ARG AVD_NAME=onboarding
+ENV AVD_NAME=${AVD_NAME}
+ENV ANDROID_AVD_HOME=/avd
+
+RUN mkdir -p /avd \
+ && echo "no" | avdmanager create avd \
+      --name "${AVD_NAME}" \
+      --package "${SYSTEM_IMAGE}" \
+      --device "pixel_5" \
+ && avdmanager list avd
+
+COPY docker/emulator-entrypoint.sh /usr/local/bin/emulator-entrypoint
+RUN chmod +x /usr/local/bin/emulator-entrypoint
+
+# 5555 because that is what every other device in this system answers on, and
+# what lib/android/emulatorProvider.ts asks the gateway to publish. The
+# emulator itself cannot bind it — see the entrypoint.
+EXPOSE 5555
+
+ENTRYPOINT ["/usr/local/bin/emulator-entrypoint"]

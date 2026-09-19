@@ -97,3 +97,28 @@ export async function accountConfigForCloning(userId: string, accountId: string)
 
   return stripSensitive(config);
 }
+
+/**
+ * Whether this account's device expects to be lent the operator's webcam.
+ *
+ * Answered before the job starts rather than from the device endpoint, because
+ * the browser has to be publishing *before* the worker boots anything — an
+ * emulator started against a camera nobody is feeding gets a device with no
+ * frames in it, which reads as a broken camera rather than a missing operator.
+ * The jobId is all the browser needs to name its stream, and it has that as
+ * soon as the job is created.
+ *
+ * Returns false for anything that is not an Android account with an
+ * `emulator.camera` block, including credentials that no longer parse.
+ */
+export async function accountLendsCamera(userId: string, accountId: string): Promise<boolean> {
+  const account = await prisma.account.findFirst({ where: { id: accountId, userId } });
+
+  if (!account?.credentials) {
+    return false;
+  }
+
+  const parsed = androidCredentialsSchema.safeParse(openSecret(account.credentials));
+
+  return parsed.success && parsed.data.emulator?.camera !== undefined;
+}

@@ -626,6 +626,88 @@ docker rm -f redroid-smoke
 Esos dos primeros properties son exactamente las compuertas que chequea
 `AdbDevice.waitUntilReady()`.
 
+### Cuentas con cámara: el emulador
+
+**Sin verificar contra un emulador real.** Todo lo de esta sección está cubierto
+por `tests/integration/emulatorLifecycle.test.ts` contra un Docker simulado,
+pero nunca arrancó un AVD, nunca abrió un v4l2loopback y nunca pasó un frame del
+navegador a Android. El primer paso es el spike de abajo, a mano.
+
+**Por qué no ReDroid.** ReDroid no tiene cámara. Upstream no expone ningún
+`androidboot.redroid_camera*` y sus imágenes no traen un HAL que enumere V4L2:
+`--device /dev/video0` hace aparecer el nodo adentro del contenedor y Android no
+lo mira nunca. El emulador lee la webcam **en el host**, en el proceso QEMU, por
+V4L2 común — antes de que Android intervenga — y la presenta como cámara frontal
+normal.
+
+**El costo es permanente.** Un emulador es bastante más detectable que ReDroid
+(`ro.kernel.qemu`, devices goldfish, fingerprint genérico, sin Play Integrity).
+Y como el volumen de sesión es lo que produce el onboarding, y el de un AVD no
+se puede llevar a ReDroid, una cuenta que se loguea acá se queda acá. Por eso
+`redroid` y `emulator` son excluyentes en las credenciales.
+
+La imagen es `google_apis_playstore`, no `google_apis`: la segunda es
+debuggable (`adb root` funciona, `ro.debuggable=1`), que es de lo primero que
+mira cualquier detector de root. Nada del sistema necesita root en el
+dispositivo. La zona horaria se pasa con `-timezone` al arrancar, porque en un
+build `user` el `setprop` de `devicePersona.ts` puede ser rechazado.
+
+**El host.** KVM, así que en EC2: `.metal`, o desde febrero de 2026 una virtual
+lanzada con `--cpu-options "NestedVirtualization=enabled"` — **sólo familias
+Intel** (M7i/M8i, C7i/C8i, R7i/R8i, I7i, X8i). La instancia Graviton donde corre
+ReDroid no sirve. `sudo ./deploy/provision-camera.sh` chequea KVM y deja los
+v4l2loopback cargados y persistentes.
+
+**Cómo viaja un frame.**
+
+```
+navegador ──WHIP──▶ mediamtx ──RTSP──▶ bridge (ffmpeg) ──▶ /dev/videoN ──▶ emulador
+getUserMedia        :8889              por job, en            host         lo ve como
+                                       redroid-camera-net                  /dev/video0
+```
+
+- El worker **no arranca nada hasta que el navegador publica**. Consulta la API
+  de mediamtx; si el operador nunca da permiso, el job falla sin haber
+  arrendado un device ni booteado un emulador.
+- Cada job arrienda un índice del pool (`CAMERA_DEVICE_POOL`): `SET NX` en
+  Redis para la carrera entre workers, y un label de Docker como registro
+  durable. El reaper devuelve al pool los que quedaron sin job al arrancar.
+- Adentro del contenedor siempre hay un solo video device, siempre
+  `/dev/video0`, siempre `webcam0`. El AVD no se entera de qué slot le tocó.
+- El bridge escribe `yuyv422`. v4l2loopback anuncia el último formato escrito,
+  y el emulador ignora un device que ofrece yuv420p.
+- El bridge vive en `redroid-camera-net`, `internal`, donde no hay ningún
+  dispositivo: una app automatizada no puede leer la webcam de otra cuenta.
+
+**Probar a mano antes de enchufar el worker** — el spike que decide si vale la
+pena seguir:
+
+```bash
+# Por nombre en redroid-net, no por un puerto publicado: el servidor adb corre
+# dentro del contenedor adb-server, y ahí `localhost` es ese contenedor.
+
+# 1. ¿La app acepta un emulador? Cámara simulada, sin nada de streaming.
+docker build -f Dockerfile.emulator -t redroid-organico/emulator:34 .
+docker run -d --name emu-smoke --network redroid-net --device /dev/kvm \
+  -v emu-smoke:/avd redroid-organico/emulator:34 -avd onboarding -camera-front emulated
+adb connect emu-smoke:5555
+adb -s emu-smoke:5555 shell getprop sys.boot_completed   # querés 1 (tarda minutos)
+adb -s emu-smoke:5555 shell getprop ro.debuggable        # querés 0: sin root
+# instalar el APK, abrir la cámara desde la app, mirarlo por el visor (:8000)
+
+# 2. ¿El emulador ve el loopback? Barra de color de prueba.
+ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -pix_fmt yuyv422 -f v4l2 /dev/video10 &
+docker rm -f emu-smoke
+docker run -d --name emu-smoke --network redroid-net --device /dev/kvm \
+  --device /dev/video10:/dev/video0 -v emu-smoke:/avd redroid-organico/emulator:34 \
+  -avd onboarding -camera-front webcam0
+# la barra de color tiene que verse en la cámara de la app
+
+docker rm -f emu-smoke && docker volume rm emu-smoke
+```
+
+Si el paso 1 falla porque la app detecta el emulador, nada de lo demás sirve.
+
 ## Autenticación
 
 Sesiones con cookie `httpOnly`, sin dependencias externas.

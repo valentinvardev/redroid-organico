@@ -1,8 +1,13 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Countdown } from './Countdown';
-import { useOnboarding, useViewerReachable, type OnboardingState } from './useOnboarding';
+import {
+  useOnboarding,
+  useViewerReachable,
+  type CameraState,
+  type OnboardingState,
+} from './useOnboarding';
 import { browserHost, resolveViewerUrl } from './viewerUrl';
 
 interface Props {
@@ -17,7 +22,7 @@ interface Props {
  * an unhandled combination is a TypeScript error rather than a blank screen.
  */
 export function OnboardingDialog({ accountId, accountName, onClose }: Props) {
-  const { state, live, start, confirm, cancel, reset } = useOnboarding(accountId);
+  const { state, live, camera, start, grantCamera, confirm, cancel, reset } = useOnboarding(accountId);
 
   const holdingDevice = state.phase === 'awaiting_human' || state.phase === 'waiting_for_device';
 
@@ -68,7 +73,13 @@ export function OnboardingDialog({ accountId, accountName, onClose }: Props) {
           </div>
         </header>
 
-        <Body state={state} onStart={() => void start()} onConfirm={() => void confirm()} />
+        <Body
+          state={state}
+          camera={camera}
+          onStart={() => void start()}
+          onGrantCamera={() => void grantCamera()}
+          onConfirm={() => void confirm()}
+        />
       </div>
     </div>
   );
@@ -76,13 +87,24 @@ export function OnboardingDialog({ accountId, accountName, onClose }: Props) {
 
 function Body({
   state,
+  camera,
   onStart,
+  onGrantCamera,
   onConfirm,
 }: {
   state: OnboardingState;
+  camera: CameraState;
   onStart(): void;
+  onGrantCamera(): void;
   onConfirm(): void;
 }) {
+  // Ahead of the spinner, not beside it: the worker will not start a device
+  // until this stream is published, so "starting a phone for you" would be a
+  // lie told while it waits on the operator.
+  if (state.phase === 'waiting_for_device' && camera.needed && camera.status !== 'live') {
+    return <CameraPrompt camera={camera} onGrant={onGrantCamera} />;
+  }
+
   switch (state.phase) {
     case 'idle':
       return (
@@ -120,6 +142,8 @@ function Body({
           />
 
           <Screen viewerUrl={state.endpoint.viewerUrl} serial={state.endpoint.serial} />
+
+          {camera.needed && camera.stream ? <CameraPreview stream={camera.stream} /> : null}
 
           <footer className="onboarding-actions">
             <button type="button" className="primary big" onClick={onConfirm}>
@@ -299,5 +323,75 @@ function Screen({ viewerUrl: template, serial }: { viewerUrl?: string; serial: s
       sandbox="allow-scripts allow-same-origin"
       allow="clipboard-write"
     />
+  );
+}
+
+/**
+ * Asks for the operator's webcam before the phone exists.
+ *
+ * The permission has to follow a click — browsers refuse getUserMedia that is
+ * not tied to a user gesture — so this is a button, not something that fires on
+ * mount. And it has to come first: the worker holds the device back until the
+ * media server reports this stream, so the order a person experiences matches
+ * the order things actually happen.
+ */
+function CameraPrompt({
+  camera,
+  onGrant,
+}: {
+  camera: Extract<CameraState, { needed: true }>;
+  onGrant(): void;
+}) {
+  const requesting = camera.status === 'requesting';
+
+  return (
+    <div className="onboarding-body onboarding-centred">
+      <p className="onboarding-lead">This phone needs a camera.</p>
+      <p className="hint">
+        The app will ask you to take a photo or a short video to confirm it is you. Your webcam
+        stands in for the phone&apos;s front camera, only for this login, and turns off as soon
+        as it ends.
+      </p>
+
+      {camera.status === 'failed' && camera.error ? (
+        <p className="onboarding-error" role="alert">
+          {camera.error}
+        </p>
+      ) : null}
+
+      <button type="button" className="primary big" onClick={onGrant} disabled={requesting}>
+        {requesting
+          ? 'Waiting for your browser…'
+          : camera.status === 'failed'
+            ? 'Try again'
+            : 'Use my camera'}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * What the phone's camera is seeing, from the operator's side.
+ *
+ * Worth the screen space: the viewer shows the app, but a person pointing their
+ * face at a laptop has no other way to tell whether they are in frame before
+ * the app takes the shot.
+ */
+function CameraPreview({ stream }: { stream: MediaStream }) {
+  const video = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (video.current) {
+      video.current.srcObject = stream;
+    }
+  }, [stream]);
+
+  return (
+    <figure className="onboarding-camera">
+      {/* Muted and inline, or mobile Safari refuses to autoplay it. Mirrored,
+          because that is what a person expects a selfie preview to look like. */}
+      <video ref={video} autoPlay muted playsInline style={{ transform: 'scaleX(-1)' }} />
+      <figcaption className="hint">Your camera, as the phone sees it</figcaption>
+    </figure>
   );
 }

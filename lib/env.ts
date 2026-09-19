@@ -86,6 +86,27 @@ const schema = z.object({
   /// the job still runs — the endpoint is reported without a URL.
   DEVICE_VIEWER_URL_TEMPLATE: z.string().default(''),
 
+  /// v4l2loopback indices available to lend to devices, e.g. "10,11,12,13".
+  /// These must match the `video_nr=` the module was loaded with on the host —
+  /// see deploy/. Empty means no account can use a camera, and a job that asks
+  /// for one fails saying so rather than starting a blind device.
+  CAMERA_DEVICE_POOL: z.string().default(''),
+
+  /// Where the browser publishes the operator's webcam. `{jobId}` names the
+  /// stream and `{host}` is substituted in the browser, the same way the viewer
+  /// template is — the worker has no request to read a hostname from. Empty
+  /// disables lending a camera.
+  CAMERA_INGEST_URL_TEMPLATE: z.string().default(''),
+
+  /// Where the worker asks whether the browser is actually publishing yet.
+  /// MediaMTX's control API, reachable from the worker only.
+  CAMERA_CONTROL_API_URL: z.string().default(''),
+
+  /// How long the worker waits for the operator to grant their camera before
+  /// giving up. Shorter than the onboarding timeout on purpose: this failure
+  /// happens before a device exists, so there is nothing to hold open.
+  CAMERA_PUBLISH_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(120_000),
+
   /// Retry budget per job and the base delay for exponential backoff.
   /// Defaults give 15s -> 60s -> 240s across 3 attempts. Lowered in .env.test so
   /// the integration suite does not spend minutes waiting on backoff.

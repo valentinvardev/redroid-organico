@@ -946,6 +946,35 @@ input[type='file']::file-selector-button {
   color: var(--red);
 }
 
+/* A failed camera grant. Inline with the prompt rather than a toast, because
+   the fix is almost always something the operator does right there: accept the
+   permission, close the other app holding the camera. */
+.onboarding-error {
+  max-width: 44ch;
+  color: var(--red);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Small and out of the way: the phone's screen is the thing being used, and
+   this only answers "am I in frame". */
+.onboarding-camera {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.onboarding-camera video {
+  width: min(240px, 60vw);
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #000;
+}
+
 .onboarding-spinner {
   width: 20px;
   height: 20px;

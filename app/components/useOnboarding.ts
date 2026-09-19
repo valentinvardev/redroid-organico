@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { randomId } from './randomId';
+import { browserHost, resolveViewerUrl } from './viewerUrl';
+import { publishCamera, type CameraPublication } from './whipPublisher';
 
 export interface DeviceEndpoint {
   serial: string;
@@ -193,11 +195,33 @@ export function useViewerReachable(viewerUrl: string | undefined): 'checking' | 
   return status;
 }
 
+/**
+ * The operator's webcam, for accounts whose device is lent one.
+ *
+ * Browser-local by nature — a permission grant and a live MediaStream are not
+ * things a job row can hold — so this sits beside the derived phase rather than
+ * inside it, the same way the `pending` overlay does. The worker's side of the
+ * handshake is visible anyway: it will not leave `waiting_for_device` until the
+ * media server reports this stream as published.
+ */
+export type CameraState =
+  | { needed: false }
+  | {
+      needed: true;
+      status: 'waiting' | 'requesting' | 'live' | 'failed';
+      /** For the local preview; null until granted. */
+      stream: MediaStream | null;
+      error: string | null;
+    };
+
 export interface UseOnboarding {
   state: OnboardingState;
   /** False while the event stream is disconnected, so the UI can say so. */
   live: boolean;
+  camera: CameraState;
   start(): Promise<void>;
+  /** Asks for the webcam and starts publishing it. Must follow a user gesture. */
+  grantCamera(): Promise<void>;
   confirm(): Promise<void>;
   cancel(): Promise<void>;
   reset(): void;
@@ -209,6 +233,15 @@ export function useOnboarding(accountId: string): UseOnboarding {
   const [jobs, setJobs] = useState<OnboardingJob[]>([]);
   const [live, setLive] = useState(false);
   const [transportError, setTransportError] = useState<string | null>(null);
+
+  const [cameraIngestUrl, setCameraIngestUrl] = useState<string | null>(null);
+  const [cameraStatus, setCameraStatus] = useState<'waiting' | 'requesting' | 'live' | 'failed'>('waiting');
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+
+  // A ref, because every path that has to stop the camera — unmount, unload,
+  // the job ending — runs somewhere React state is either stale or gone.
+  const publicationRef = useRef<CameraPublication | null>(null);
 
   // Read inside unload handlers, where React state would be stale.
   const jobIdRef = useRef<string | null>(null);
@@ -285,11 +318,50 @@ export function useOnboarding(accountId: string): UseOnboarding {
       }
 
       setJobId(body.job.id as string);
+
+      // Absent for every account that is not lent a camera, which is most of
+      // them: the dialog then behaves exactly as it did before this existed.
+      setCameraIngestUrl(typeof body.cameraIngestUrl === 'string' ? body.cameraIngestUrl : null);
+      setCameraStatus('waiting');
+      setCameraError(null);
     } catch (error) {
       setPending(null);
       setTransportError(error instanceof Error ? error.message : 'Network error');
     }
   }, [accountId]);
+
+  const stopCamera = useCallback(async () => {
+    const publication = publicationRef.current;
+    publicationRef.current = null;
+    setCameraStream(null);
+
+    if (publication) {
+      await publication.stop();
+    }
+  }, []);
+
+  const grantCamera = useCallback(async () => {
+    if (!cameraIngestUrl || publicationRef.current) {
+      return;
+    }
+
+    setCameraStatus('requesting');
+    setCameraError(null);
+
+    try {
+      // Resolved here for the same reason the viewer's is: the server built
+      // this URL without knowing which address the operator used to reach it.
+      const url = resolveViewerUrl(cameraIngestUrl, browserHost()) ?? cameraIngestUrl;
+      const publication = await publishCamera(url);
+
+      publicationRef.current = publication;
+      setCameraStream(publication.stream);
+      setCameraStatus('live');
+    } catch (error) {
+      setCameraStatus('failed');
+      setCameraError(error instanceof Error ? error.message : 'Could not start the camera');
+    }
+  }, [cameraIngestUrl]);
 
   const confirm = useCallback(async () => {
     if (!jobId) {
@@ -349,10 +421,14 @@ export function useOnboarding(accountId: string): UseOnboarding {
   }, [jobs, cancel]);
 
   const reset = useCallback(() => {
+    void stopCamera();
     setJobId(null);
     setPending(null);
     setTransportError(null);
-  }, []);
+    setCameraIngestUrl(null);
+    setCameraStatus('waiting');
+    setCameraError(null);
+  }, [stopCamera]);
 
   const state = useMemo<OnboardingState>(() => {
     if (transportError) {
@@ -362,5 +438,27 @@ export function useOnboarding(accountId: string): UseOnboarding {
     return derive(pending, jobId, job);
   }, [transportError, pending, jobId, job]);
 
-  return { state, live, start, confirm, cancel, reset };
+  // The camera is lent for the login and not a moment longer. Once the job has
+  // left the phases where a person is using the device — verified, failed,
+  // cancelled — the light goes off, whether or not the dialog is still open.
+  useEffect(() => {
+    const inUse = ['waiting_for_device', 'awaiting_human', 'confirming', 'verifying'];
+
+    if (publicationRef.current && !inUse.includes(state.phase)) {
+      void stopCamera();
+    }
+  }, [state.phase, stopCamera]);
+
+  // And on unmount, which is how closing the dialog mid-session arrives here.
+  useEffect(() => () => void stopCamera(), [stopCamera]);
+
+  const camera = useMemo<CameraState>(
+    () =>
+      cameraIngestUrl
+        ? { needed: true, status: cameraStatus, stream: cameraStream, error: cameraError }
+        : { needed: false },
+    [cameraIngestUrl, cameraStatus, cameraStream, cameraError],
+  );
+
+  return { state, live, camera, start, grantCamera, confirm, cancel, reset };
 }

@@ -6,7 +6,12 @@ import { getEnv } from '@/lib/env';
 import { closeRedis } from '@/lib/queue/connection';
 import { DEAD_LETTER_QUEUE, PUBLISH_QUEUE } from '@/lib/queue/publishQueue';
 import { createPublishWorker, reconcileSlots, recoverOrphans } from '@/lib/worker/createWorker';
-import { reapAndroidContainers, startAndroidReaper, type ReaperHandle } from '@/lib/android/reaper';
+import {
+  reapAndroidContainers,
+  reconcileCameraLeases,
+  startAndroidReaper,
+  type ReaperHandle,
+} from '@/lib/android/reaper';
 
 const env = getEnv();
 
@@ -29,6 +34,11 @@ async function startContainerReaping(): Promise<ReaperHandle | undefined> {
   if (initial.inspected > 0) {
     console.log(`[worker] startup sweep: ${initial.removed.length}/${initial.inspected} container(s) reaped`);
   }
+
+  // After the sweep, so the containers it just removed are already gone from
+  // the listing this reads. A lease whose container was reaped a moment ago is
+  // exactly the one that needs returning.
+  await reconcileCameraLeases();
 
   if (env.ANDROID_REAPER_INTERVAL_MS === 0) {
     return undefined;
