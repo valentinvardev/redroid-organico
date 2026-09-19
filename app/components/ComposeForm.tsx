@@ -49,7 +49,23 @@ export function ComposeForm() {
 
   useEffect(() => {
     fetch('/api/accounts')
-      .then((response) => response.json())
+      .then(async (response) => {
+        // A failed request answers with `{ message }`, not a list, and calling
+        // `.find` on that throws inside render — so a database that is merely
+        // unreachable, or a dashboard opened before any user exists, took down
+        // the whole page instead of showing the error below.
+        if (!response.ok) {
+          throw new Error(`accounts request failed (${response.status})`);
+        }
+
+        const data: unknown = await response.json();
+
+        if (!Array.isArray(data)) {
+          throw new Error('accounts response was not a list');
+        }
+
+        return data as AccountOption[];
+      })
       .then((data: AccountOption[]) => {
         setAccounts(data);
         // Default to one that can actually run. The seeded development account
