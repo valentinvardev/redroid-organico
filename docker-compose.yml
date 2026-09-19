@@ -246,6 +246,14 @@ services:
       # session looks established, and not one frame ever arrives. Set
       # CAMERA_PUBLIC_HOST in .env to the instance's public address.
       MTX_WEBRTCADDITIONALHOSTS: "${CAMERA_PUBLIC_HOST:-}"
+      # ICE over TCP as well as UDP, on the same port.
+      #
+      # Two situations need it. An operator behind a network that blocks UDP
+      # negotiates a session and then sends no media — the failure looks like a
+      # broken camera. And reaching the dashboard through an SSH tunnel, which
+      # is how this is used before TLS exists, forwards TCP only: without this
+      # the page loads over the tunnel and the video has nowhere to go.
+      MTX_WEBRTCLOCALTCPADDRESS: ":8189"
     ports:
       # The worker runs on the host under systemd, so it reaches the API here.
       # Loopback only, like adb: it reports every stream and who is publishing.
@@ -254,10 +262,13 @@ services:
       # termination as the dashboard: getUserMedia needs a secure context, so
       # a plain-HTTP deployment cannot use this at all.
       - "8889:8889"
-      # WebRTC media. UDP, and published on the host because an ICE candidate
-      # that does not resolve from the operator's network is a camera that
-      # connects and then never sends a frame.
+      # WebRTC media. Published on the host because an ICE candidate that does
+      # not resolve from the operator's network is a camera that connects and
+      # then never sends a frame. Both protocols on one port: UDP is the one
+      # that performs, TCP is the one that works through a tunnel or a
+      # restrictive network.
       - "8189:8189/udp"
+      - "8189:8189/tcp"
     networks:
       # Published ports and the browser reach it here.
       - default
