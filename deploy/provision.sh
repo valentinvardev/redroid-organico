@@ -30,6 +30,11 @@ done
 step() { echo; echo "==> $*"; }
 warn() { echo "    warning: $*" >&2; }
 die()  { echo "error: $*" >&2; exit 1; }
+
+# `set -e` aborts without saying anything, which on a provisioning script is the
+# worst possible silence: the log simply stops after whatever step was running,
+# and finding out which command failed means re-running it by hand. This says so.
+trap 'status=$?; echo; echo "error: fallo en la linea $LINENO con exit $status" >&2; echo "       comando: $BASH_COMMAND" >&2' ERR
 as_user() { sudo -u "$RUN_USER" -H bash -lc "cd '$REPO_DIR' && $*"; }
 
 # --- packages ----------------------------------------------------------------
