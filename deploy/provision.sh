@@ -27,6 +27,10 @@ done
 
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 
+# See deploy/provision-camera.sh: unattended-upgrades holds the dpkg lock on a
+# fresh instance, and giving up on it fails the whole provisioning run.
+APT="apt-get -o DPkg::Lock::Timeout=600"
+
 step() { echo; echo "==> $*"; }
 warn() { echo "    warning: $*" >&2; }
 die()  { echo "error: $*" >&2; exit 1; }
@@ -41,10 +45,10 @@ as_user() { sudo -u "$RUN_USER" -H bash -lc "cd '$REPO_DIR' && $*"; }
 
 if [[ $SKIP_APT -eq 0 ]]; then
   step "Installing packages"
-  apt-get update -qq
+  $APT update -qq
   # adb: the worker talks to devices. ffmpeg: the media pipeline validates
   # uploads with ffprobe and accepts them unvalidated without it.
-  apt-get install -y -qq --no-install-recommends \
+  $APT install -y -qq --no-install-recommends \
     ca-certificates curl git adb ffmpeg jq
 
   if ! command -v docker >/dev/null; then
@@ -53,7 +57,7 @@ if [[ $SKIP_APT -eq 0 ]]; then
 
   if ! command -v node >/dev/null || [[ "$(node -v | cut -c2- | cut -d. -f1)" -lt 20 ]]; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y -qq nodejs
+    $APT install -y -qq nodejs
   fi
 
   usermod -aG docker "$RUN_USER" || true

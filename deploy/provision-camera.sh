@@ -28,6 +28,13 @@ done
 
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 
+# A fresh cloud instance runs unattended-upgrades at boot, and this script may
+# also be started alongside provision.sh — either one holds the dpkg lock for
+# minutes. Waiting is the correct answer; failing turns a busy machine into an
+# unprovisionable one, and the error apt reports afterwards names the package
+# it never got to look at rather than the lock.
+APT="apt-get -o DPkg::Lock::Timeout=600"
+
 step() { echo; echo "==> $*"; }
 warn() { echo "    warning: $*" >&2; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -59,12 +66,12 @@ echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' > /etc/udev/rules.d/65-kvm.rules
 # match CAMERA_DEVICE_POOL exactly.
 step "Setting up v4l2loopback (${SLOTS} slots from /dev/video${FIRST_INDEX})"
 
-apt-get update -qq
+$APT update -qq
 
 # The headers are what DKMS compiles against, and a fresh cloud image has none.
 # Without them the package installs "successfully", builds nothing, and the
 # modprobe below is the first thing to notice.
-apt-get install -y -qq "linux-headers-$(uname -r)" \
+$APT install -y -qq "linux-headers-$(uname -r)" \
   || die "No headers for kernel $(uname -r), so DKMS cannot build anything.
   On an AWS kernel try: apt-get install linux-headers-aws"
 
@@ -74,13 +81,13 @@ apt-get install -y -qq "linux-headers-$(uname -r)" \
 # core is actually present is decided by the modprobe below, which is the only
 # check that means anything. Failing here on a package name would refuse to
 # provision a host that works.
-apt-get install -y -qq "linux-modules-extra-$(uname -r)" 2>/dev/null \
-  || apt-get install -y -qq linux-modules-extra-aws 2>/dev/null \
+$APT install -y -qq "linux-modules-extra-$(uname -r)" 2>/dev/null \
+  || $APT install -y -qq linux-modules-extra-aws 2>/dev/null \
   || warn "no linux-modules-extra for $(uname -r); continuing, the modprobe below is the real test"
 
 # DKMS rebuilds the module on every kernel upgrade, or the camera disappears on
 # the first reboot after an unattended-upgrades run.
-apt-get install -y -qq v4l2loopback-dkms v4l-utils \
+$APT install -y -qq v4l2loopback-dkms v4l-utils \
   || die "Could not install v4l2loopback-dkms."
 
 INDICES=$(seq -s, "$FIRST_INDEX" "$((FIRST_INDEX + SLOTS - 1))")
