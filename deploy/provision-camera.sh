@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #
 # Prepares a host to run emulators that are lent the operator's webcam.
-# Idempotent: safe to re-run. Run after provision.sh, on the host that will run
-# emulator accounts.
+# Idempotent: safe to re-run, before or after provision.sh. On a fresh instance
+# run it first: the KVM check is the one that decides whether the machine is
+# usable at all, and it takes a second instead of the minutes provision.sh
+# spends installing Docker and Node before anything could fail.
 #
 #   sudo ./deploy/provision-camera.sh                 four camera slots, 10-13
 #   sudo ./deploy/provision-camera.sh --slots 8       eight slots, 10-17
@@ -58,10 +60,14 @@ step "Setting up v4l2loopback (${SLOTS} slots from /dev/video${FIRST_INDEX})"
 
 # linux-modules-extra carries the V4L2 core on the AWS kernel, which ships
 # without it; DKMS rebuilds the module on every kernel upgrade, or the camera
-# disappears on the first reboot after an unattended-upgrades run.
+# disappears on the first reboot after an unattended-upgrades run. The headers
+# are what DKMS compiles against, and a fresh cloud image has none: without
+# them the package installs "successfully", builds nothing, and the modprobe
+# below is the first thing to notice.
 apt-get update -qq
-apt-get install -y -qq "linux-modules-extra-$(uname -r)" v4l2loopback-dkms v4l-utils \
-  || die "Could not install v4l2loopback. On a custom kernel, install its headers first."
+apt-get install -y -qq \
+  "linux-headers-$(uname -r)" "linux-modules-extra-$(uname -r)" v4l2loopback-dkms v4l-utils \
+  || die "Could not install v4l2loopback for kernel $(uname -r)."
 
 INDICES=$(seq -s, "$FIRST_INDEX" "$((FIRST_INDEX + SLOTS - 1))")
 
