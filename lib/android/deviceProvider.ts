@@ -15,6 +15,15 @@ export interface AcquireContext {
    * comes out empty — so installation has to happen against a live device.
    */
   apkPath?: string;
+  /**
+   * Whether a missing app is fatal. True everywhere except interactive
+   * onboarding, where handing a person a usable phone is worth more than the
+   * guarantee — they can sideload the app themselves, which is often the very
+   * reason the device was asked for. Publishing keeps the guarantee: a flow
+   * driven against an app that is not there is the failure that reports
+   * success without doing anything.
+   */
+  requirePackage?: boolean;
   log: JobLogger;
   signal: AbortSignal;
 }
@@ -104,11 +113,22 @@ export async function ensurePackageInstalled(
   device: AndroidDevice,
   context: AcquireContext,
 ): Promise<void> {
+  const required = context.requirePackage ?? true;
+
   if (await device.isPackageInstalled(context.packageName, context.signal)) {
     return;
   }
 
   if (!context.apkPath) {
+    if (!required) {
+      await context.log.warn(
+        'The app is not on the device and no apkPath was configured. Handing over the phone anyway — ' +
+          'install it yourself before confirming, or the verification flow will have nothing to check.',
+        { packageName: context.packageName },
+      );
+      return;
+    }
+
     throw new PackageNotInstalledError(context.packageName);
   }
 
@@ -117,11 +137,37 @@ export async function ensurePackageInstalled(
     apkPath: context.apkPath,
   });
 
-  await device.installPackage(context.apkPath, context.signal);
+  try {
+    await device.installPackage(context.apkPath, context.signal);
+  } catch (error) {
+    if (required) {
+      throw error;
+    }
+
+    // A broken APK path, a signature conflict with an older install, no space
+    // on the device: all of them leave a working phone that a person can still
+    // use, so none of them are worth destroying it over here.
+    await context.log.warn('Could not install the app; handing over the phone without it', {
+      packageName: context.packageName,
+      apkPath: context.apkPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return;
+  }
 
   // Trust the check, not the installer: `adb install` has been known to report
   // success for a package the package manager then cannot resolve.
   if (!(await device.isPackageInstalled(context.packageName, context.signal))) {
+    if (!required) {
+      await context.log.warn(
+        'The installer reported success but the package manager cannot resolve the app. ' +
+          'Handing over the phone anyway.',
+        { packageName: context.packageName },
+      );
+      return;
+    }
+
     throw new PackageNotInstalledError(context.packageName);
   }
 

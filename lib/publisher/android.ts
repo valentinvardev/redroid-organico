@@ -399,21 +399,36 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
     let session: AppiumSessionInfo | null = null;
 
     try {
-      acquired = await this.acquire(provider, credentials, account.id, jobId, log, signal);
+      // `false`: a missing app must not cost the operator the phone. Onboarding
+      // is frequently the only way to get one, and installing the app by hand
+      // is a legitimate thing to do with it.
+      acquired = await this.acquire(provider, credentials, account.id, jobId, log, signal, false);
 
-      await acquired.device.launch(credentials.packageName, credentials.activityName, signal);
+      // Every failure from here to onDeviceReady is reported and then stepped
+      // over. The device is already up; tearing it down would turn "the app is
+      // not on this phone" into "you cannot have a phone", which is the more
+      // expensive of the two by a wide margin.
+      try {
+        await acquired.device.launch(credentials.packageName, credentials.activityName, signal);
 
-      if (credentials.launchSettleMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, credentials.launchSettleMs));
-      }
+        if (credentials.launchSettleMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, credentials.launchSettleMs));
+        }
 
-      // This, not the launch command's exit code, is what decides whether the
-      // app came up.
-      if (!(await acquired.device.isAppRunning(credentials.packageName, signal))) {
-        throw permanent(
-          'app_not_running',
-          `${credentials.packageName} is not running after launch — nothing for the operator to log into`,
-        );
+        // This, not the launch command's exit code, is what decides whether the
+        // app came up.
+        if (!(await acquired.device.isAppRunning(credentials.packageName, signal))) {
+          await log.warn(
+            `${credentials.packageName} is not running after launch. The phone is yours anyway — ` +
+              'open or install the app from the screen before confirming.',
+            { packageName: credentials.packageName, activityName: credentials.activityName },
+          );
+        }
+      } catch (error) {
+        await log.warn('Could not launch the app; handing over the phone anyway', {
+          packageName: credentials.packageName,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       const serial = acquired.serial ?? credentials.deviceSerial ?? 'unknown';
@@ -618,6 +633,8 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
     jobId: string,
     log: PublishRequest['log'],
     signal: AbortSignal,
+    /** False only for onboarding — see AcquireContext.requirePackage. */
+    requirePackage = true,
   ): Promise<AcquiredDevice> {
     try {
       return await provider.acquire({
@@ -625,6 +642,7 @@ export class AndroidPublisher implements Publisher, OnboardingDriver {
         accountId,
         packageName: credentials.packageName,
         apkPath: credentials.apkPath,
+        requirePackage,
         log,
         signal,
       });

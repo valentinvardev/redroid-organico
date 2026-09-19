@@ -8,6 +8,11 @@ import type { PublishRequest } from '@/lib/publisher/types';
 import { AndroidPublisher, uniqueRemotePath } from '@/lib/publisher/android';
 import { PublishError } from '@/lib/publisher/errors';
 import { FakeAppium, FakeDevice, FakeDeviceProvider, type FakeDeviceOptions } from '../helpers/fakeAppium';
+import {
+  PackageNotInstalledError,
+  ensurePackageInstalled,
+  type AcquireContext,
+} from '@/lib/android/deviceProvider';
 
 const MEDIA_BYTES = Buffer.from('fake video content');
 const tempDir = path.join(tmpdir(), 'redroid-organico-android');
@@ -355,5 +360,61 @@ describe('AndroidPublisher', () => {
 
     assert.equal(error.code, 'appium_unreachable');
     assert.equal(error.retryable, true);
+  });
+});
+
+describe('a missing app under test', () => {
+  function context(overrides: Record<string, unknown>) {
+    const warnings: string[] = [];
+
+    const log = {
+      debug: async () => undefined,
+      info: async () => undefined,
+      warn: async (message: string) => {
+        warnings.push(message);
+      },
+      error: async () => undefined,
+    };
+
+    return {
+      warnings,
+      ctx: {
+        jobId: 'job-1',
+        accountId: 'account-1',
+        packageName: 'com.sportreels.app',
+        log,
+        signal: new AbortController().signal,
+        ...overrides,
+      } as unknown as AcquireContext,
+    };
+  }
+
+  it('still stops a publish, because a flow driven against nothing reports success', async () => {
+    const device = new FakeDevice({ packageInstalled: false });
+    const { ctx } = context({});
+
+    await assert.rejects(ensurePackageInstalled(device, ctx), PackageNotInstalledError);
+  });
+
+  it('hands the phone over anyway during onboarding, and says so', async () => {
+    const device = new FakeDevice({ packageInstalled: false });
+    const { ctx, warnings } = context({ requirePackage: false });
+
+    // The point of the exercise: onboarding is often the only way to get a
+    // phone, and installing the app by hand is a legitimate thing to do on it.
+    await ensurePackageInstalled(device, ctx);
+
+    assert.equal(warnings.length, 1, 'the operator has to be told the app is not there');
+    assert.match(warnings[0], /not on the device/);
+  });
+
+  it('does not lose the phone when the APK itself will not install', async () => {
+    const device = new FakeDevice({ packageInstalled: false, installFails: true });
+    const { ctx, warnings } = context({ requirePackage: false, apkPath: '/tmp/broken.apk' });
+
+    await ensurePackageInstalled(device, ctx);
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Could not install the app/);
   });
 });
