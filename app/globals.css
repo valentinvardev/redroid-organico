@@ -966,6 +966,24 @@ input[type='file']::file-selector-button {
   gap: 6px;
 }
 
+.onboarding-camera-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Only rendered when there is more than one camera, so it never takes space
+   to say something the operator has no choice about. */
+.onboarding-camera-picker select {
+  max-width: 220px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--fg);
+  font-size: 12px;
+}
+
 .onboarding-camera video {
   width: min(240px, 60vw);
   aspect-ratio: 16 / 9;

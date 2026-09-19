@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveViewerUrl } from '@/app/components/viewerUrl';
+import { cameraLabel } from '@/app/components/whipPublisher';
 import { describeAddress, resetLocationCache } from '@/lib/android/geo';
 
 describe('device viewer URL', () => {
@@ -102,5 +103,19 @@ describe('egress address', () => {
     assert.equal(calls, 1);
 
     resetLocationCache();
+  });
+});
+
+describe('camera labels', () => {
+  it('numbers a camera the browser refuses to name', () => {
+    // Labels are withheld until the page has been granted a camera once, so a
+    // selector built from raw labels is a list of blank options — which reads
+    // as a broken control rather than as a permission that was never asked for.
+    assert.equal(cameraLabel('', 0), 'Camera 1');
+    assert.equal(cameraLabel('   ', 2), 'Camera 3');
+  });
+
+  it('keeps the real name once the browser hands it over', () => {
+    assert.equal(cameraLabel('Logitech BRIO (046d:085e)', 0), 'Logitech BRIO (046d:085e)');
   });
 });

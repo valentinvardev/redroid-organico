@@ -22,7 +22,8 @@ interface Props {
  * an unhandled combination is a TypeScript error rather than a blank screen.
  */
 export function OnboardingDialog({ accountId, accountName, onClose }: Props) {
-  const { state, live, camera, start, grantCamera, confirm, cancel, reset } = useOnboarding(accountId);
+  const { state, live, camera, start, grantCamera, selectCamera, confirm, cancel, reset } =
+    useOnboarding(accountId);
 
   const holdingDevice = state.phase === 'awaiting_human' || state.phase === 'waiting_for_device';
 
@@ -78,6 +79,7 @@ export function OnboardingDialog({ accountId, accountName, onClose }: Props) {
           camera={camera}
           onStart={() => void start()}
           onGrantCamera={() => void grantCamera()}
+          onSelectCamera={(deviceId) => void selectCamera(deviceId)}
           onConfirm={() => void confirm()}
         />
       </div>
@@ -90,19 +92,21 @@ function Body({
   camera,
   onStart,
   onGrantCamera,
+  onSelectCamera,
   onConfirm,
 }: {
   state: OnboardingState;
   camera: CameraState;
   onStart(): void;
   onGrantCamera(): void;
+  onSelectCamera(deviceId: string): void;
   onConfirm(): void;
 }) {
   // Ahead of the spinner, not beside it: the worker will not start a device
   // until this stream is published, so "starting a phone for you" would be a
   // lie told while it waits on the operator.
   if (state.phase === 'waiting_for_device' && camera.needed && camera.status !== 'live') {
-    return <CameraPrompt camera={camera} onGrant={onGrantCamera} />;
+    return <CameraPrompt camera={camera} onGrant={onGrantCamera} onSelect={onSelectCamera} />;
   }
 
   switch (state.phase) {
@@ -143,7 +147,9 @@ function Body({
 
           <Screen viewerUrl={state.endpoint.viewerUrl} serial={state.endpoint.serial} />
 
-          {camera.needed && camera.stream ? <CameraPreview stream={camera.stream} /> : null}
+          {camera.needed && camera.stream ? (
+            <CameraPreview camera={camera} onSelect={onSelectCamera} />
+          ) : null}
 
           <footer className="onboarding-actions">
             <button type="button" className="primary big" onClick={onConfirm}>
@@ -338,9 +344,11 @@ function Screen({ viewerUrl: template, serial }: { viewerUrl?: string; serial: s
 function CameraPrompt({
   camera,
   onGrant,
+  onSelect,
 }: {
   camera: Extract<CameraState, { needed: true }>;
   onGrant(): void;
+  onSelect(deviceId: string): void;
 }) {
   const requesting = camera.status === 'requesting';
 
@@ -358,6 +366,10 @@ function CameraPrompt({
           {camera.error}
         </p>
       ) : null}
+
+      {/* Only after a failed or repeated grant is there a list to show: the
+          browser hands out no device labels until it has said yes once. */}
+      <CameraPicker camera={camera} onSelect={onSelect} />
 
       <button type="button" className="primary big" onClick={onGrant} disabled={requesting}>
         {requesting
@@ -377,21 +389,68 @@ function CameraPrompt({
  * face at a laptop has no other way to tell whether they are in frame before
  * the app takes the shot.
  */
-function CameraPreview({ stream }: { stream: MediaStream }) {
+function CameraPreview({
+  camera,
+  onSelect,
+}: {
+  camera: Extract<CameraState, { needed: true }>;
+  onSelect(deviceId: string): void;
+}) {
   const video = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     if (video.current) {
-      video.current.srcObject = stream;
+      video.current.srcObject = camera.stream;
     }
-  }, [stream]);
+  }, [camera.stream]);
 
   return (
     <figure className="onboarding-camera">
       {/* Muted and inline, or mobile Safari refuses to autoplay it. Mirrored,
           because that is what a person expects a selfie preview to look like. */}
       <video ref={video} autoPlay muted playsInline style={{ transform: 'scaleX(-1)' }} />
-      <figcaption className="hint">Your camera, as the phone sees it</figcaption>
+
+      {/* Switchable mid-session: the phone keeps receiving one continuous
+          stream, so picking the wrong camera is not worth restarting for. */}
+      <CameraPicker camera={camera} onSelect={onSelect} />
+
+      {camera.error ? (
+        <figcaption className="onboarding-error" role="alert">
+          {camera.error}
+        </figcaption>
+      ) : (
+        <figcaption className="hint">Your camera, as the phone sees it</figcaption>
+      )}
     </figure>
+  );
+}
+
+/** The list is empty before the first grant, and pointless with one camera. */
+function CameraPicker({
+  camera,
+  onSelect,
+}: {
+  camera: Extract<CameraState, { needed: true }>;
+  onSelect(deviceId: string): void;
+}) {
+  if (camera.devices.length < 2) {
+    return null;
+  }
+
+  return (
+    <label className="onboarding-camera-picker">
+      <span className="hint">Camera</span>
+      <select
+        value={camera.deviceId ?? ''}
+        onChange={(event) => onSelect(event.target.value)}
+        disabled={camera.status === 'requesting'}
+      >
+        {camera.devices.map((device) => (
+          <option key={device.deviceId} value={device.deviceId}>
+            {device.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

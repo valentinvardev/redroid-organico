@@ -9,11 +9,70 @@
  * finished onboarding should not still have the light on.
  */
 
+export interface CameraDevice {
+  deviceId: string;
+  label: string;
+}
+
 export interface CameraPublication {
   /** For the local preview. Already live when this resolves. */
   stream: MediaStream;
+  /** Which camera is currently being sent. */
+  deviceId: string | null;
+  /**
+   * Swaps the camera without dropping the session.
+   *
+   * `replaceTrack` on the existing sender rather than a new offer: the codec
+   * and the transport stay as negotiated, so the phone sees one continuous
+   * stream instead of a stall while a second WHIP session is set up. Returns
+   * the new stream for the preview.
+   */
+  switchTo(deviceId: string): Promise<MediaStream>;
   /** Idempotent. Stops the tracks and tells the server to drop the session. */
   stop(): Promise<void>;
+}
+
+/**
+ * Browsers withhold camera labels until the page has been granted a camera
+ * once — before that, `label` is an empty string on every device. A numbered
+ * fallback keeps the list usable in that state instead of rendering a select
+ * full of blank options.
+ */
+export function cameraLabel(label: string, index: number): string {
+  return label.trim() || `Camera ${index + 1}`;
+}
+
+export async function listCameras(): Promise<CameraDevice[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    return [];
+  }
+
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+
+  return devices
+    .filter((device) => device.kind === 'videoinput')
+    .map((device, index) => ({
+      deviceId: device.deviceId,
+      label: cameraLabel(device.label, index),
+    }));
+}
+
+function constraints(deviceId?: string | null): MediaStreamConstraints {
+  return {
+    // Matched to the bridge's default output so nothing has to be rescaled
+    // twice on the way to a device.
+    video: {
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      // `exact`, so asking for a camera that has been unplugged fails loudly
+      // instead of silently handing over a different one.
+      ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' }),
+    },
+    // The phone's camera is what is being stood in for, and no verification
+    // flow this is used for asks for sound. Not sending it means never having
+    // to explain where the operator's microphone audio went.
+    audio: false,
+  };
 }
 
 export class CameraDeniedError extends Error {
@@ -63,19 +122,14 @@ function gathered(pc: RTCPeerConnection): Promise<void> {
   });
 }
 
-export async function publishCamera(ingestUrl: string): Promise<CameraPublication> {
+export async function publishCamera(
+  ingestUrl: string,
+  deviceId?: string | null,
+): Promise<CameraPublication> {
   let stream: MediaStream;
 
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      // Matched to the bridge's default output so nothing has to be rescaled
-      // twice on the way to a device.
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-      // The phone's camera is what is being stood in for, and no verification
-      // flow this is used for asks for sound. Not sending it means never having
-      // to explain where the operator's microphone audio went.
-      audio: false,
-    });
+    stream = await navigator.mediaDevices.getUserMedia(constraints(deviceId));
   } catch (error) {
     throw new CameraDeniedError(error);
   }
@@ -133,7 +187,58 @@ export async function publishCamera(ingestUrl: string): Promise<CameraPublicatio
 
     await pc.setRemoteDescription({ type: 'answer', sdp: await response.text() });
 
-    return { stream, stop };
+    const publication: CameraPublication = {
+      stream,
+      deviceId: stream.getVideoTracks()[0]?.getSettings().deviceId ?? deviceId ?? null,
+
+      switchTo: async (next: string) => {
+        const sender = pc.getSenders().find((candidate) => candidate.track?.kind === 'video');
+
+        if (!sender) {
+          throw new Error('this session has no video sender to swap');
+        }
+
+        let replacement: MediaStream;
+
+        try {
+          replacement = await navigator.mediaDevices.getUserMedia(constraints(next));
+        } catch (error) {
+          throw new CameraDeniedError(error);
+        }
+
+        const track = replacement.getVideoTracks()[0];
+
+        if (!track) {
+          throw new Error('the selected camera produced no video track');
+        }
+
+        await sender.replaceTrack(track);
+
+        // Only after the swap succeeded: stopping first would blank the phone
+        // for as long as the new camera takes to open, and leave it blank for
+        // good if opening it failed.
+        for (const old of publication.stream.getTracks()) {
+          old.stop();
+        }
+
+        publication.stream = replacement;
+        publication.deviceId = track.getSettings().deviceId ?? next;
+
+        return replacement;
+      },
+
+      stop: async () => {
+        // Re-read through the object: `stream` above is the one this session
+        // started with, and a switch has since replaced it.
+        for (const track of publication.stream.getTracks()) {
+          track.stop();
+        }
+
+        await stop();
+      },
+    };
+
+    return publication;
   } catch (error) {
     // Never leave the camera light on because negotiation failed.
     await stop();

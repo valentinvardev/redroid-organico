@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { randomId } from './randomId';
 import { browserHost, resolveViewerUrl } from './viewerUrl';
-import { publishCamera, type CameraPublication } from './whipPublisher';
+import {
+  listCameras,
+  publishCamera,
+  type CameraDevice,
+  type CameraPublication,
+} from './whipPublisher';
 
 export interface DeviceEndpoint {
   serial: string;
@@ -211,6 +216,13 @@ export type CameraState =
       status: 'waiting' | 'requesting' | 'live' | 'failed';
       /** For the local preview; null until granted. */
       stream: MediaStream | null;
+      /**
+       * Cameras to choose from. Empty until the browser has been granted one,
+       * because labels — and on some browsers the devices themselves — are
+       * withheld from a page that has never had permission.
+       */
+      devices: CameraDevice[];
+      deviceId: string | null;
       error: string | null;
     };
 
@@ -222,6 +234,8 @@ export interface UseOnboarding {
   start(): Promise<void>;
   /** Asks for the webcam and starts publishing it. Must follow a user gesture. */
   grantCamera(): Promise<void>;
+  /** Swaps which camera is being sent, without dropping the live session. */
+  selectCamera(deviceId: string): Promise<void>;
   confirm(): Promise<void>;
   cancel(): Promise<void>;
   reset(): void;
@@ -238,6 +252,8 @@ export function useOnboarding(accountId: string): UseOnboarding {
   const [cameraStatus, setCameraStatus] = useState<'waiting' | 'requesting' | 'live' | 'failed'>('waiting');
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraDevices, setCameraDevices] = useState<CameraDevice[]>([]);
+  const [cameraDeviceId, setCameraDeviceId] = useState<string | null>(null);
 
   // A ref, because every path that has to stop the camera — unmount, unload,
   // the job ending — runs somewhere React state is either stale or gone.
@@ -352,15 +368,57 @@ export function useOnboarding(accountId: string): UseOnboarding {
       // Resolved here for the same reason the viewer's is: the server built
       // this URL without knowing which address the operator used to reach it.
       const url = resolveViewerUrl(cameraIngestUrl, browserHost()) ?? cameraIngestUrl;
-      const publication = await publishCamera(url);
+      const publication = await publishCamera(url, cameraDeviceId);
 
       publicationRef.current = publication;
       setCameraStream(publication.stream);
+      setCameraDeviceId(publication.deviceId);
       setCameraStatus('live');
+
+      // Listed only now: before a grant the browser reports no labels, and on
+      // some it reports no devices at all, so a selector built earlier would
+      // be empty or unreadable.
+      setCameraDevices(await listCameras());
     } catch (error) {
       setCameraStatus('failed');
       setCameraError(error instanceof Error ? error.message : 'Could not start the camera');
     }
+  }, [cameraIngestUrl, cameraDeviceId]);
+
+  const selectCamera = useCallback(async (deviceId: string) => {
+    const publication = publicationRef.current;
+
+    // Before the grant this is only a preference; `grantCamera` reads it.
+    if (!publication) {
+      setCameraDeviceId(deviceId);
+      return;
+    }
+
+    setCameraError(null);
+
+    try {
+      setCameraStream(await publication.switchTo(deviceId));
+      setCameraDeviceId(publication.deviceId);
+    } catch (error) {
+      // The session is still live on the previous camera — switchTo only
+      // replaces the track once the new one is open — so this is a warning,
+      // not a failed state.
+      setCameraError(error instanceof Error ? error.message : 'Could not switch camera');
+    }
+  }, []);
+
+  // A camera plugged in or unplugged mid-session changes the list under us.
+  useEffect(() => {
+    if (!cameraIngestUrl || typeof navigator === 'undefined' || !navigator.mediaDevices) {
+      return;
+    }
+
+    const refresh = () => {
+      void listCameras().then(setCameraDevices);
+    };
+
+    navigator.mediaDevices.addEventListener('devicechange', refresh);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', refresh);
   }, [cameraIngestUrl]);
 
   const confirm = useCallback(async () => {
@@ -428,6 +486,8 @@ export function useOnboarding(accountId: string): UseOnboarding {
     setCameraIngestUrl(null);
     setCameraStatus('waiting');
     setCameraError(null);
+    setCameraDevices([]);
+    setCameraDeviceId(null);
   }, [stopCamera]);
 
   const state = useMemo<OnboardingState>(() => {
@@ -455,10 +515,17 @@ export function useOnboarding(accountId: string): UseOnboarding {
   const camera = useMemo<CameraState>(
     () =>
       cameraIngestUrl
-        ? { needed: true, status: cameraStatus, stream: cameraStream, error: cameraError }
+        ? {
+            needed: true,
+            status: cameraStatus,
+            stream: cameraStream,
+            devices: cameraDevices,
+            deviceId: cameraDeviceId,
+            error: cameraError,
+          }
         : { needed: false },
-    [cameraIngestUrl, cameraStatus, cameraStream, cameraError],
+    [cameraIngestUrl, cameraStatus, cameraStream, cameraDevices, cameraDeviceId, cameraError],
   );
 
-  return { state, live, camera, start, grantCamera, confirm, cancel, reset };
+  return { state, live, camera, start, grantCamera, selectCamera, confirm, cancel, reset };
 }
