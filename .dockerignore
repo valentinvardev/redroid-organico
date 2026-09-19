@@ -12,3 +12,24 @@ node_modules
 Dockerfile
 docker-compose*.yml
 .github
+
+# Everything below lives in the checkout on a server but has no business in an
+# image. The build stage copies the whole context, so each of these used to be
+# written into a layer on every build: staged uploads and test videos are
+# gigabytes that filled an 8 GB root volume mid-`npm run build`, and the APK is
+# installed at runtime from the host, never from inside the image.
+.staging
+.storage-test
+*.tsbuildinfo
+*.apk
+*.mp4
+*.mov
+*.webm
+
+# Account configs carry credentials. Leaving them in the context puts secrets
+# into the build cache, where `docker history` and a pushed layer can both
+# reach them. The names are the ones deploy/provision.sh suggests and the ones
+# in use; keep new ones matching these patterns.
+my-account*.json
+cuenta*.json
+*-credentials.json
