@@ -29,6 +29,7 @@ done
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 
 step() { echo; echo "==> $*"; }
+warn() { echo "    warning: $*" >&2; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 # --- KVM ---------------------------------------------------------------------
@@ -58,16 +59,29 @@ echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' > /etc/udev/rules.d/65-kvm.rules
 # match CAMERA_DEVICE_POOL exactly.
 step "Setting up v4l2loopback (${SLOTS} slots from /dev/video${FIRST_INDEX})"
 
-# linux-modules-extra carries the V4L2 core on the AWS kernel, which ships
-# without it; DKMS rebuilds the module on every kernel upgrade, or the camera
-# disappears on the first reboot after an unattended-upgrades run. The headers
-# are what DKMS compiles against, and a fresh cloud image has none: without
-# them the package installs "successfully", builds nothing, and the modprobe
-# below is the first thing to notice.
 apt-get update -qq
-apt-get install -y -qq \
-  "linux-headers-$(uname -r)" "linux-modules-extra-$(uname -r)" v4l2loopback-dkms v4l-utils \
-  || die "Could not install v4l2loopback for kernel $(uname -r)."
+
+# The headers are what DKMS compiles against, and a fresh cloud image has none.
+# Without them the package installs "successfully", builds nothing, and the
+# modprobe below is the first thing to notice.
+apt-get install -y -qq "linux-headers-$(uname -r)" \
+  || die "No headers for kernel $(uname -r), so DKMS cannot build anything.
+  On an AWS kernel try: apt-get install linux-headers-aws"
+
+# The V4L2 core (videodev). Its package name moves between kernel flavours and
+# releases — on some AWS kernels the versioned one does not exist at all — so
+# this is deliberately best effort rather than a hard requirement. Whether the
+# core is actually present is decided by the modprobe below, which is the only
+# check that means anything. Failing here on a package name would refuse to
+# provision a host that works.
+apt-get install -y -qq "linux-modules-extra-$(uname -r)" 2>/dev/null \
+  || apt-get install -y -qq linux-modules-extra-aws 2>/dev/null \
+  || warn "no linux-modules-extra for $(uname -r); continuing, the modprobe below is the real test"
+
+# DKMS rebuilds the module on every kernel upgrade, or the camera disappears on
+# the first reboot after an unattended-upgrades run.
+apt-get install -y -qq v4l2loopback-dkms v4l-utils \
+  || die "Could not install v4l2loopback-dkms."
 
 INDICES=$(seq -s, "$FIRST_INDEX" "$((FIRST_INDEX + SLOTS - 1))")
 
@@ -85,7 +99,17 @@ echo v4l2loopback > /etc/modules-load.d/redroid-camera.conf
 # Refused while a device is open, which is the correct answer: a live session
 # is using one.
 modprobe -r v4l2loopback 2>/dev/null || true
-modprobe v4l2loopback || die "v4l2loopback would not load. Is a session still holding a camera open?"
+
+# v4l2loopback links against the V4L2 core, and on a kernel that keeps videodev
+# in a package nobody installed, it fails with "Unknown symbol" rather than
+# anything that names the cause.
+modprobe videodev 2>/dev/null || true
+
+modprobe v4l2loopback || die "v4l2loopback would not load for kernel $(uname -r).
+  If dmesg shows 'Unknown symbol' the V4L2 core is missing: find the package
+  that carries videodev for this kernel and install it.
+  If it says the module is in use, a live session is still holding a camera.
+  Check with: dmesg | tail -20"
 
 # --- Verify ------------------------------------------------------------------
 step "Verifying"
