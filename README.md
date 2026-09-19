@@ -626,6 +626,39 @@ docker rm -f redroid-smoke
 Esos dos primeros properties son exactamente las compuertas que chequea
 `AdbDevice.waitUntilReady()`.
 
+### Play Store en la imagen
+
+ReDroid es AOSP pelado: no trae Play Store ni Play Services, y no hay ninguna
+opción de configuración que los agregue, porque viven en la imagen de sistema.
+Se hornean con:
+
+```bash
+./scripts/build-gapps-image.sh --tag redroid-organico/redroid:13-gapps
+```
+
+Después el tag va en `redroid.image` de la cuenta, como cualquier otro. El
+script envuelve a [ayasa520/redroid-script](https://github.com/ayasa520/redroid-script),
+y **verifica por resultado**: para Android 13 el camino es MindTheGapps (`-mtg`),
+porque `-g` está limitado a Android 11 y en cualquier otra versión imprime un
+warning, no instala nada y termina con éxito igual. Por eso el script arranca la
+imagen y comprueba que `com.android.vending` y `com.google.android.gms` estén
+instalados antes de decir que sirve.
+
+Dos cosas que no se pueden deshacer:
+
+- **El dispositivo queda sin certificar.** Google sólo confía en fingerprints
+  que conoce, y este no lo es. Play Store no deja iniciar sesión hasta registrar
+  el GSF Android ID en [google.com/android/uncertified](https://www.google.com/android/uncertified),
+  y es **por dispositivo**: hay que repetirlo para el volumen de sesión de cada
+  cuenta.
+- **Un dispositivo sin certificar con apps de Google encima es una huella más
+  fuerte que no tenerlas.** Falla Play Integrity por construcción. Si lo único
+  que necesitás es instalar tu app, `apkPath` ya lo hace y esta imagen es la
+  herramienta equivocada.
+
+El emulador no necesita nada de esto: su system image es
+`google_apis_playstore`, que trae una Play Store certificada.
+
 ### Cuentas con cámara: el emulador
 
 **Sin verificar contra un emulador real.** Todo lo de esta sección está cubierto
