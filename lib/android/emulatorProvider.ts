@@ -118,6 +118,23 @@ export const emulatorConfigSchema = z.object({
    */
   kvmDevice: z.string().min(1).default('/dev/kvm'),
 
+  /**
+   * Public key of the adb server that will talk to this device, on the host.
+   *
+   * Not optional in practice. The system image is a `user` build, so the
+   * device enforces adb authentication and only trusts keys the emulator
+   * injected at boot — and the emulator injects whatever it finds in its own
+   * container, which is a key nobody else has. Without this the device boots
+   * perfectly, `adb connect` succeeds, and every command answers
+   * `device unauthorized` until the job times out, with no dialog anywhere for
+   * a person to accept.
+   *
+   * Extract it once from the shared adb server:
+   *
+   *   docker cp <adb-server>:/home/appuser/.android/adbkey.pub ./adbkey.pub
+   */
+  adbPublicKeyPath: z.string().min(1).optional(),
+
   /** Absent means a plain AVD with no camera and no bridge. */
   camera: emulatorCameraSchema.optional(),
 
@@ -337,7 +354,15 @@ export class EmulatorDeviceProvider implements DeviceProvider {
           memoryLimit: config.memoryLimit,
           publishContainerPort: publishesPort && !gateway ? 5555 : undefined,
           devices: [config.kvmDevice, ...(camera ? [camera.mapping] : [])],
-          volumes: [{ source: volume, target: '/avd' }],
+          volumes: [
+            { source: volume, target: '/avd' },
+            // Read-only, spelled into the target because the volume spec here
+            // is a bare `source:target` join. The emulator reads this before
+            // it boots and copies it into the device's authorised keys.
+            ...(config.adbPublicKeyPath
+              ? [{ source: config.adbPublicKeyPath, target: '/root/.android/adbkey.pub:ro' }]
+              : []),
+          ],
           command: emulatorArgs(config, proxy),
         },
         { signal: context.signal },
@@ -476,7 +501,26 @@ export class EmulatorDeviceProvider implements DeviceProvider {
     const device =
       this.options.createDevice?.(serial) ?? new AdbDevice(adbCommand, { ...adbServer, serial });
 
-    await device.waitUntilReady(bootTimeoutSeconds * 1_000, context.signal);
+    try {
+      await device.waitUntilReady(bootTimeoutSeconds * 1_000, context.signal);
+    } catch (error) {
+      // The shape this failure takes when the key is missing is indistinguishable
+      // from a slow boot: ADB connects, then every command answers `device
+      // unauthorized` until the timeout. Naming the likely cause here costs
+      // nothing and saves reading container logs that show a healthy Android.
+      if (!config.adbPublicKeyPath) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n\n` +
+            'This account has no `adbPublicKeyPath`. The system image is a user build, so the ' +
+            'device only accepts adb clients whose key the emulator injected at boot — and ' +
+            'nothing injected the shared adb server\'s. Extract it once with:\n' +
+            '  docker cp <adb-server>:/home/appuser/.android/adbkey.pub ./adbkey.pub',
+          { cause: error },
+        );
+      }
+
+      throw error;
+    }
 
     return device;
   }

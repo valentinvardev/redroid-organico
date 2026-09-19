@@ -298,6 +298,26 @@ describe('EmulatorDeviceProvider', () => {
     await acquired.release();
   });
 
+  it('mounts the adb public key, without which a user build answers every command unauthorized', async () => {
+    const { subject, docker } = provider({
+      acquireCamera: fakeSlot().acquireCamera,
+      config: { adbPublicKeyPath: '/home/ubuntu/redroid-organico/adbkey.pub' },
+    });
+
+    const acquired = await subject.acquire(context());
+    const spec = docker.runs.find((run) => run.name === 'emulator-job-job-1');
+
+    assert.deepEqual(spec?.volumes, [
+      { source: 'emulator-session-account-1', target: '/avd' },
+      {
+        source: '/home/ubuntu/redroid-organico/adbkey.pub',
+        target: '/root/.android/adbkey.pub:ro',
+      },
+    ]);
+
+    await acquired.release();
+  });
+
   it('boots with the exit’s time zone instead of relying on setprop, which a rootless image refuses', async () => {
     const proxy: ProxyRuntimeConfig = {
       type: 'SOCKS5',

@@ -685,6 +685,19 @@ mira cualquier detector de root. Nada del sistema necesita root en el
 dispositivo. La zona horaria se pasa con `-timezone` al arrancar, porque en un
 build `user` el `setprop` de `devicePersona.ts` puede ser rechazado.
 
+**La clave de ADB, que no es opcional.** La system image es un build `user`, así
+que el dispositivo exige autenticación de ADB y sólo confía en las claves que el
+emulador inyecta al arrancar — y el emulador inyecta la de su propio contenedor,
+que no tiene nadie más. Sin esto el teléfono bootea perfecto, `adb connect`
+funciona, y después cada comando contesta `device unauthorized` hasta que el job
+expira, sin ningún diálogo que alguien pueda aceptar. Se extrae una sola vez:
+
+```bash
+docker cp redroid-organico-adb-server-1:/home/appuser/.android/adbkey.pub   ~/redroid-organico/adbkey.pub
+```
+
+y se apunta desde la cuenta con `"adbPublicKeyPath": "/home/ubuntu/redroid-organico/adbkey.pub"`.
+
 **El host.** KVM, así que en EC2: `.metal`, o desde febrero de 2026 una virtual
 lanzada con `--cpu-options "NestedVirtualization=enabled"` — **sólo familias
 Intel** (M7i/M8i, C7i/C8i, R7i/R8i, I7i, X8i). La instancia Graviton donde corre
