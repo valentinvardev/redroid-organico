@@ -13,6 +13,18 @@ set -eu
 CONSOLE_PORT=5584
 ADB_PORT=5585
 
+# A container that was killed rather than stopped leaves the AVD's lock behind,
+# and the next boot refuses with "Running multiple emulators with the same AVD",
+# suggesting -read-only. That flag is the wrong answer here: it stops writing
+# changes back to the AVD, and the AVD is where the logged-in session lives —
+# the entire reason this volume exists.
+#
+# Clearing the lock is safe because the invariant holds elsewhere: each account
+# has its own volume, and the provider refuses to start a second container for
+# an account that already has one. So a lock found here was never held by a
+# live emulator.
+find "${ANDROID_AVD_HOME:-/avd}" -maxdepth 3 -name '*.lock' -exec rm -rf {} + 2>/dev/null || true
+
 # Headless, but with an X server present: the GPU path initialises against one
 # even when nothing is displayed, and swiftshader is the only renderer that
 # works on a server with no GPU.
