@@ -1,0 +1,39 @@
+# Access rules for the media server. Everything else stays at MediaMTX's
+# defaults or comes from environment variables in docker-compose.yml.
+#
+# This file exists for one reason: the API's access list cannot be set through
+# environment variables. `MTX_AUTHINTERNALUSERS_1_IPS` and friends are silently
+# ignored for this list — verified against 1.9.3, both as a partial override
+# and with the whole entry respecified — so the only way to change it is a
+# config file.
+#
+# What goes wrong without it: MediaMTX ships an administrator entry that grants
+# the api action to 127.0.0.1, meaning 127.0.0.1 *inside its own container*.
+# The worker runs on the host and arrives through Docker's port mapping as the
+# bridge gateway, so every poll gets 401. It reads that as "nobody published a
+# camera", waits its full timeout and then blames the operator for a camera
+# they did in fact grant.
+#
+# Declaring `authInternalUsers` replaces the default list entirely, so both
+# entries are spelled out — dropping the first would lock out the browser that
+# publishes.
+
+authInternalUsers:
+  # Anyone may publish and read. The only thing that reaches this server is a
+  # per-job stream whose name is a job id, on an internal network.
+  - user: any
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+
+  # The API, for the worker. An empty `ips` is not as open as it looks: the API
+  # port is published on 127.0.0.1 in docker-compose.yml, so the host is the
+  # only thing that can reach it at all.
+  - user: any
+    ips: []
+    permissions:
+      - action: api
+      - action: metrics
+      - action: pprof
