@@ -240,6 +240,17 @@ services:
       # actually granted their camera, before it leases a device for them.
       MTX_API: "yes"
       MTX_APIADDRESS: ":9997"
+      # Who may call the API. MediaMTX ships an internal user that grants the
+      # api/metrics/pprof actions to 127.0.0.1 only — meaning 127.0.0.1 *inside
+      # this container*. The worker runs on the host and arrives through
+      # Docker's port mapping as the bridge gateway, so out of the box it gets
+      # a 401 on every poll and reads it as "nobody is publishing": the camera
+      # arrives, the job waits its full timeout, and the error blames the
+      # operator for not granting it.
+      #
+      # Widening this does not expose the API: it is published on 127.0.0.1
+      # above, so the host is the only thing that can reach the port at all.
+      MTX_AUTHINTERNALUSERS_1_IPS: "127.0.0.1,::1,172.16.0.0/12"
       # The address the operator's browser sends media to. Without it MediaMTX
       # advertises only the container's own bridge addresses as ICE candidates,
       # which nothing outside Docker can reach: the offer is answered, the

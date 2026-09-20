@@ -224,6 +224,12 @@ export async function waitForCameraPublisher(
   const stream = cameraStreamName(jobId);
   const deadline = Date.now() + timeoutMs;
 
+  // Remembered so the timeout can tell the two apart. "404 on every poll" means
+  // nobody published; "401 on every poll" means this worker cannot read the
+  // media server at all, and the operator did nothing wrong.
+  let lastStatus: number | null = null;
+  let lastTransportError: string | null = null;
+
   for (;;) {
     if (signal.aborted) {
       throw new Error('Cancelled while waiting for the operator to grant their camera');
@@ -233,6 +239,9 @@ export async function waitForCameraPublisher(
     // starting. Only the deadline ends this loop unhappily.
     const publishing = await doFetch(`${apiUrl}/v3/paths/get/${stream}`, { signal })
       .then(async (response) => {
+        lastStatus = response.status;
+        lastTransportError = null;
+
         if (!response.ok) {
           return false;
         }
@@ -240,15 +249,38 @@ export async function waitForCameraPublisher(
         const path = (await response.json()) as { ready?: boolean; source?: unknown };
         return path.ready === true && path.source !== null;
       })
-      .catch(() => false);
+      .catch((error: unknown) => {
+        lastTransportError = error instanceof Error ? error.message : String(error);
+        return false;
+      });
 
     if (publishing) {
       return;
     }
 
     if (Date.now() >= deadline) {
+      const seconds = Math.round(timeoutMs / 1_000);
+
+      if (lastTransportError) {
+        throw new Error(
+          `Could not reach the media server at ${apiUrl} while waiting for a camera ` +
+            `(${lastTransportError}). This is a configuration problem, not a missing operator.`,
+        );
+      }
+
+      // Anything but 404 means the API answered and refused. 401 is the one
+      // that actually happens: the API's default access list only admits
+      // 127.0.0.1 as seen from inside its own container.
+      if (lastStatus !== null && lastStatus !== 404 && lastStatus !== 200) {
+        throw new Error(
+          `The media server answered ${lastStatus} for ${stream}, so this worker cannot tell ` +
+            'whether a camera was published. Check the API access list — the operator may well ' +
+            'have granted their camera.',
+        );
+      }
+
       throw new Error(
-        `Nothing published a camera to ${stream} within ${Math.round(timeoutMs / 1_000)}s. ` +
+        `Nothing published a camera to ${stream} within ${seconds}s. ` +
           'The operator never granted their camera, or the dashboard could not reach the ' +
           'media server — getUserMedia needs a secure context, so check that it is served over HTTPS.',
       );
