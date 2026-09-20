@@ -18,6 +18,13 @@
 # entries are spelled out — dropping the first would lock out the browser that
 # publishes.
 
+# Allow any path name. The default config file carries this rule, and mounting
+# a file over it takes the rule away with it: without it MediaMTX refuses every
+# publish with a 400, because each job publishes to a path named after its own
+# id and no such path is declared anywhere.
+paths:
+  all_others:
+
 authInternalUsers:
   # Anyone may publish and read. The only thing that reaches this server is a
   # per-job stream whose name is a job id, on an internal network.
