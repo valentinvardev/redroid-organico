@@ -38,11 +38,25 @@ socat TCP-LISTEN:5555,fork,reuseaddr "TCP:127.0.0.1:${ADB_PORT}" &
 # `exec` so the emulator is PID 1: it has to receive SIGTERM directly, or
 # `docker stop` kills the shell and leaves a half-written userdata image behind
 # — which is the account's session.
+# No Vulkan, on a host with no GPU.
+#
+# The renderer here is SwiftShader, which implements GLES well and Vulkan
+# partially. Android 14's UI toolkit prefers Vulkan, and the moment something
+# heavy renders — the Play Store is the reliable trigger — SwiftShader logs
+# hundreds of "UNSUPPORTED: curExtension->sType" and then segfaults, taking the
+# whole emulator with it. The container exits 139 and the operator loses the
+# phone mid-session, which reads as the device randomly dying.
+#
+# Two settings because they act at different levels: the feature flag keeps the
+# guest from seeing a Vulkan device at all, and the HWUI property pins the UI
+# renderer to the GL backend even where one is advertised.
 exec emulator \
   -ports "${CONSOLE_PORT},${ADB_PORT}" \
   -no-window \
   -no-boot-anim \
   -no-audio \
   -gpu swiftshader_indirect \
+  -feature -Vulkan \
+  -prop debug.hwui.renderer=skiagl \
   -accel on \
   "$@"
